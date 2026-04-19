@@ -1,60 +1,586 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List
-import uuid
-from datetime import datetime
-
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
+import os
+import logging
+import uuid
+import bcrypt
+import jwt
+import json
+import re
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional, Literal
+
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, EmailStr
+
+# ---------- ENV / DB ----------
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
-app = FastAPI()
+JWT_ALGORITHM = "HS256"
+DEFAULT_CATEGORIES = [
+    {"id": "food", "name": "Food & Dining", "icon": "restaurant", "color": "#C85A40", "type": "expense"},
+    {"id": "transport", "name": "Transport", "icon": "car", "color": "#4A7059", "type": "expense"},
+    {"id": "shopping", "name": "Shopping", "icon": "bag", "color": "#D4A574", "type": "expense"},
+    {"id": "bills", "name": "Bills & Utilities", "icon": "receipt", "color": "#8B6F47", "type": "expense"},
+    {"id": "entertainment", "name": "Entertainment", "icon": "film", "color": "#A55A7E", "type": "expense"},
+    {"id": "health", "name": "Health", "icon": "medkit", "color": "#5A8A9C", "type": "expense"},
+    {"id": "education", "name": "Education", "icon": "school", "color": "#6B8E7F", "type": "expense"},
+    {"id": "travel", "name": "Travel", "icon": "airplane", "color": "#C8955A", "type": "expense"},
+    {"id": "groceries", "name": "Groceries", "icon": "basket", "color": "#7A9B6E", "type": "expense"},
+    {"id": "other_exp", "name": "Other", "icon": "ellipsis-horizontal", "color": "#787672", "type": "expense"},
+    {"id": "salary", "name": "Salary", "icon": "cash", "color": "#1E3F32", "type": "income"},
+    {"id": "freelance", "name": "Freelance", "icon": "briefcase", "color": "#4A7059", "type": "income"},
+    {"id": "investment", "name": "Investment", "icon": "trending-up", "color": "#6B8E7F", "type": "income"},
+    {"id": "gift", "name": "Gift", "icon": "gift", "color": "#A55A7E", "type": "income"},
+    {"id": "other_inc", "name": "Other Income", "icon": "add-circle", "color": "#787672", "type": "income"},
+]
 
-# Create a router with the /api prefix
+app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
+# ---------- AUTH HELPERS ----------
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-# Define Models
-class StatusCheck(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+def get_jwt_secret() -> str:
+    return os.environ["JWT_SECRET"]
 
-# Add your routes to the router instead of directly to app
+def create_access_token(user_id: str, email: str) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+        "type": "access",
+    }
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+async def get_current_user(request: Request) -> dict:
+    token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    if not token:
+        token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+# ---------- MODELS ----------
+class RegisterBody(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    name: str = Field(min_length=1, max_length=80)
+
+class LoginBody(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    name: str
+    currency: str = "USD"
+    role: str = "user"
+    created_at: str
+
+class AuthResponse(BaseModel):
+    user: UserOut
+    access_token: str
+
+class TransactionIn(BaseModel):
+    amount: float
+    type: Literal["income", "expense"]
+    category: str
+    description: str = ""
+    date: Optional[str] = None  # ISO string
+
+class TransactionOut(TransactionIn):
+    id: str
+    user_id: str
+    created_at: str
+
+class BudgetIn(BaseModel):
+    category: str
+    amount: float
+    month: str  # format YYYY-MM
+
+class BudgetOut(BudgetIn):
+    id: str
+    user_id: str
+    created_at: str
+
+class GoalIn(BaseModel):
+    title: str
+    target_amount: float
+    current_amount: float = 0
+    deadline: Optional[str] = None
+
+class GoalOut(GoalIn):
+    id: str
+    user_id: str
+    created_at: str
+
+class GoalContributionIn(BaseModel):
+    amount: float
+
+class CategorySuggestIn(BaseModel):
+    description: str
+    amount: Optional[float] = None
+
+# ---------- AUTH ENDPOINTS ----------
+@api_router.post("/auth/register", response_model=AuthResponse)
+async def register(body: RegisterBody):
+    email = body.email.lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": user_id,
+        "email": email,
+        "password_hash": hash_password(body.password),
+        "name": body.name,
+        "currency": "USD",
+        "role": "user",
+        "created_at": now,
+    }
+    await db.users.insert_one(doc)
+    token = create_access_token(user_id, email)
+    return {
+        "user": {"id": user_id, "email": email, "name": body.name, "currency": "USD", "role": "user", "created_at": now},
+        "access_token": token,
+    }
+
+@api_router.post("/auth/login", response_model=AuthResponse)
+async def login(body: LoginBody):
+    email = body.email.lower()
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_access_token(user["id"], email)
+    return {
+        "user": {
+            "id": user["id"],
+            "email": user["email"],
+            "name": user["name"],
+            "currency": user.get("currency", "USD"),
+            "role": user.get("role", "user"),
+            "created_at": user["created_at"],
+        },
+        "access_token": token,
+    }
+
+@api_router.get("/auth/me", response_model=UserOut)
+async def me(user: dict = Depends(get_current_user)):
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "name": user["name"],
+        "currency": user.get("currency", "USD"),
+        "role": user.get("role", "user"),
+        "created_at": user["created_at"],
+    }
+
+@api_router.post("/auth/logout")
+async def logout(user: dict = Depends(get_current_user)):
+    # Stateless JWT — client just discards. Endpoint exists for symmetry.
+    return {"ok": True}
+
+# ---------- CATEGORIES ----------
+@api_router.get("/categories")
+async def list_categories(user: dict = Depends(get_current_user)):
+    return DEFAULT_CATEGORIES
+
+# ---------- TRANSACTIONS ----------
+@api_router.post("/transactions", response_model=TransactionOut)
+async def create_transaction(body: TransactionIn, user: dict = Depends(get_current_user)):
+    tid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": tid,
+        "user_id": user["id"],
+        "amount": float(body.amount),
+        "type": body.type,
+        "category": body.category,
+        "description": body.description or "",
+        "date": body.date or now,
+        "created_at": now,
+    }
+    await db.transactions.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/transactions", response_model=List[TransactionOut])
+async def list_transactions(
+    user: dict = Depends(get_current_user),
+    limit: int = 200,
+    type: Optional[str] = None,
+    category: Optional[str] = None,
+):
+    q: dict = {"user_id": user["id"]}
+    if type:
+        q["type"] = type
+    if category:
+        q["category"] = category
+    cursor = db.transactions.find(q, {"_id": 0}).sort("date", -1).limit(limit)
+    return await cursor.to_list(length=limit)
+
+@api_router.delete("/transactions/{tid}")
+async def delete_transaction(tid: str, user: dict = Depends(get_current_user)):
+    res = await db.transactions.delete_one({"id": tid, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return {"ok": True}
+
+@api_router.put("/transactions/{tid}", response_model=TransactionOut)
+async def update_transaction(tid: str, body: TransactionIn, user: dict = Depends(get_current_user)):
+    update = {
+        "amount": float(body.amount),
+        "type": body.type,
+        "category": body.category,
+        "description": body.description or "",
+        "date": body.date or datetime.now(timezone.utc).isoformat(),
+    }
+    res = await db.transactions.find_one_and_update(
+        {"id": tid, "user_id": user["id"]},
+        {"$set": update},
+        return_document=True,
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    res.pop("_id", None)
+    return res
+
+# ---------- DASHBOARD ----------
+@api_router.get("/dashboard/summary")
+async def dashboard_summary(user: dict = Depends(get_current_user)):
+    txs = await db.transactions.find({"user_id": user["id"]}, {"_id": 0}).to_list(length=5000)
+    total_income = sum(t["amount"] for t in txs if t["type"] == "income")
+    total_expense = sum(t["amount"] for t in txs if t["type"] == "expense")
+    balance = total_income - total_expense
+
+    now = datetime.now(timezone.utc)
+    this_month = now.strftime("%Y-%m")
+    month_income = 0.0
+    month_expense = 0.0
+    by_category: dict = {}
+    monthly: dict = {}
+    for t in txs:
+        try:
+            dt = datetime.fromisoformat(t["date"].replace("Z", "+00:00"))
+        except Exception:
+            continue
+        key = dt.strftime("%Y-%m")
+        monthly.setdefault(key, {"income": 0.0, "expense": 0.0})
+        monthly[key][t["type"]] += t["amount"]
+        if key == this_month:
+            if t["type"] == "income":
+                month_income += t["amount"]
+            else:
+                month_expense += t["amount"]
+                by_category[t["category"]] = by_category.get(t["category"], 0.0) + t["amount"]
+
+    # Sort monthly last 6 months
+    months_sorted = sorted(monthly.keys())[-6:]
+    monthly_series = [
+        {"month": m, "income": monthly[m]["income"], "expense": monthly[m]["expense"]}
+        for m in months_sorted
+    ]
+
+    category_breakdown = [
+        {"category": k, "amount": v}
+        for k, v in sorted(by_category.items(), key=lambda x: -x[1])
+    ]
+
+    recent = sorted(txs, key=lambda t: t.get("date", ""), reverse=True)[:5]
+
+    return {
+        "balance": balance,
+        "total_income": total_income,
+        "total_expense": total_expense,
+        "month_income": month_income,
+        "month_expense": month_expense,
+        "month_savings": month_income - month_expense,
+        "monthly_series": monthly_series,
+        "category_breakdown": category_breakdown,
+        "recent_transactions": recent,
+        "transaction_count": len(txs),
+    }
+
+# ---------- BUDGETS ----------
+@api_router.post("/budgets", response_model=BudgetOut)
+async def create_budget(body: BudgetIn, user: dict = Depends(get_current_user)):
+    bid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": bid,
+        "user_id": user["id"],
+        "category": body.category,
+        "amount": float(body.amount),
+        "month": body.month,
+        "created_at": now,
+    }
+    # Upsert: one budget per (user, category, month)
+    await db.budgets.update_one(
+        {"user_id": user["id"], "category": body.category, "month": body.month},
+        {"$set": doc},
+        upsert=True,
+    )
+    out = await db.budgets.find_one(
+        {"user_id": user["id"], "category": body.category, "month": body.month},
+        {"_id": 0},
+    )
+    return out
+
+@api_router.get("/budgets")
+async def list_budgets(user: dict = Depends(get_current_user), month: Optional[str] = None):
+    q: dict = {"user_id": user["id"]}
+    if month:
+        q["month"] = month
+    budgets = await db.budgets.find(q, {"_id": 0}).to_list(length=500)
+
+    # Compute spent per category for the month
+    result = []
+    for b in budgets:
+        m = b["month"]
+        start = f"{m}-01"
+        # Next month boundary
+        year, mo = map(int, m.split("-"))
+        if mo == 12:
+            nxt = f"{year+1}-01-01"
+        else:
+            nxt = f"{year}-{mo+1:02d}-01"
+        cursor = db.transactions.find(
+            {
+                "user_id": user["id"],
+                "category": b["category"],
+                "type": "expense",
+                "date": {"$gte": start, "$lt": nxt},
+            },
+            {"_id": 0, "amount": 1},
+        )
+        spent = 0.0
+        async for t in cursor:
+            spent += t["amount"]
+        b["spent"] = spent
+        result.append(b)
+    return result
+
+@api_router.delete("/budgets/{bid}")
+async def delete_budget(bid: str, user: dict = Depends(get_current_user)):
+    res = await db.budgets.delete_one({"id": bid, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    return {"ok": True}
+
+# ---------- GOALS ----------
+@api_router.post("/goals", response_model=GoalOut)
+async def create_goal(body: GoalIn, user: dict = Depends(get_current_user)):
+    gid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": gid,
+        "user_id": user["id"],
+        "title": body.title,
+        "target_amount": float(body.target_amount),
+        "current_amount": float(body.current_amount),
+        "deadline": body.deadline,
+        "created_at": now,
+    }
+    await db.goals.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/goals", response_model=List[GoalOut])
+async def list_goals(user: dict = Depends(get_current_user)):
+    return await db.goals.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(length=200)
+
+@api_router.post("/goals/{gid}/contribute", response_model=GoalOut)
+async def contribute_goal(gid: str, body: GoalContributionIn, user: dict = Depends(get_current_user)):
+    res = await db.goals.find_one_and_update(
+        {"id": gid, "user_id": user["id"]},
+        {"$inc": {"current_amount": float(body.amount)}},
+        return_document=True,
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    res.pop("_id", None)
+    return res
+
+@api_router.delete("/goals/{gid}")
+async def delete_goal(gid: str, user: dict = Depends(get_current_user)):
+    res = await db.goals.delete_one({"id": gid, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    return {"ok": True}
+
+# ---------- AI INSIGHTS ----------
+async def _ai_chat(session_id: str, system: str, prompt: str) -> str:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(
+        api_key=os.environ["EMERGENT_LLM_KEY"],
+        session_id=session_id,
+        system_message=system,
+    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    response = await chat.send_message(UserMessage(text=prompt))
+    return response
+
+def _extract_json(text: str):
+    # Strip code fences
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?", "", text).strip()
+    text = re.sub(r"```$", "", text).strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        # Find first JSON object in text
+        match = re.search(r"\{[\s\S]*\}", text)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except Exception:
+                return None
+    return None
+
+@api_router.post("/ai/insights")
+async def ai_insights(user: dict = Depends(get_current_user)):
+    txs = await db.transactions.find({"user_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(length=300)
+    if not txs:
+        return {
+            "summary": "Start adding transactions to unlock personalised insights.",
+            "top_categories": [],
+            "anomalies": [],
+            "tips": [
+                "Record every expense for 7 days to see where your money goes.",
+                "Set a monthly budget for your top spending category.",
+            ],
+            "forecast_next_month": None,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    compact = [
+        {
+            "amount": round(t["amount"], 2),
+            "type": t["type"],
+            "category": t["category"],
+            "description": t.get("description", ""),
+            "date": t["date"][:10],
+        }
+        for t in txs[:150]
+    ]
+
+    system = (
+        "You are a calm, thoughtful personal finance coach. Always respond with STRICT JSON only — "
+        "no prose, no markdown, no code fences. Amounts are in the user's currency (USD unless noted). "
+        "Keep tone warm, specific, and actionable."
+    )
+    prompt = f"""Analyse these transactions and return JSON with this exact shape:
+{{
+  "summary": "<1-2 sentence overview of the user's financial behaviour this period>",
+  "top_categories": [
+    {{"category": "<name>", "amount": <number>, "insight": "<1 sentence observation>"}}
+  ],
+  "anomalies": [
+    {{"description": "<what stood out>", "severity": "low|medium|high"}}
+  ],
+  "tips": ["<short actionable tip>", "<short actionable tip>", "<short actionable tip>"],
+  "forecast_next_month": {{"expected_expense": <number>, "confidence": "low|medium|high"}}
+}}
+
+Transactions:
+{json.dumps(compact)}
+"""
+    try:
+        raw = await _ai_chat(f"insights-{user['id']}", system, prompt)
+        data = _extract_json(raw)
+        if not data:
+            raise ValueError("AI returned unparseable output")
+        data["generated_at"] = datetime.now(timezone.utc).isoformat()
+        return data
+    except Exception as e:
+        logging.exception("AI insights failed")
+        # Fallback deterministic insight
+        total_exp = sum(t["amount"] for t in txs if t["type"] == "expense")
+        by_cat: dict = {}
+        for t in txs:
+            if t["type"] == "expense":
+                by_cat[t["category"]] = by_cat.get(t["category"], 0) + t["amount"]
+        top = sorted(by_cat.items(), key=lambda x: -x[1])[:3]
+        return {
+            "summary": f"You've tracked {len(txs)} transactions totaling ${total_exp:.2f} in expenses.",
+            "top_categories": [{"category": k, "amount": round(v, 2), "insight": "Largest share of spending."} for k, v in top],
+            "anomalies": [],
+            "tips": [
+                "Review your top category for subscriptions you can cancel.",
+                "Aim to save 20% of income each month.",
+            ],
+            "forecast_next_month": {"expected_expense": round(total_exp / max(1, len(txs)) * 30, 2), "confidence": "low"},
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "fallback": True,
+            "error": str(e),
+        }
+
+@api_router.post("/ai/suggest-category")
+async def ai_suggest_category(body: CategorySuggestIn, user: dict = Depends(get_current_user)):
+    if not body.description.strip():
+        raise HTTPException(status_code=400, detail="description is required")
+    cats = [c["id"] + " (" + c["name"] + ")" for c in DEFAULT_CATEGORIES]
+    system = (
+        "You classify a short transaction description into ONE category id from the allowed list. "
+        "Return STRICT JSON: {\"category\":\"<id>\",\"confidence\":<0-1 float>}. No prose."
+    )
+    prompt = f"""Allowed categories (id: name):
+{json.dumps(cats)}
+
+Transaction description: "{body.description}"
+Amount: {body.amount if body.amount is not None else 'unknown'}
+
+Pick the best-matching category id."""
+    try:
+        raw = await _ai_chat(f"cat-{user['id']}", system, prompt)
+        data = _extract_json(raw) or {}
+        cat = data.get("category", "other_exp")
+        valid_ids = {c["id"] for c in DEFAULT_CATEGORIES}
+        if cat not in valid_ids:
+            cat = "other_exp"
+        return {"category": cat, "confidence": float(data.get("confidence", 0.5))}
+    except Exception as e:
+        logging.exception("AI category suggest failed")
+        return {"category": "other_exp", "confidence": 0.0, "error": str(e)}
+
+# ---------- HEALTH ----------
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "FinanceFocus API", "status": "ok"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.dict()
-    status_obj = StatusCheck(**status_dict)
-    _ = await db.status_checks.insert_one(status_obj.dict())
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    status_checks = await db.status_checks.find().to_list(1000)
-    return [StatusCheck(**status_check) for status_check in status_checks]
-
-# Include the router in the main app
+# ---------- MOUNT ----------
 app.include_router(api_router)
-
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -63,12 +589,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ---------- STARTUP ----------
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.transactions.create_index([("user_id", 1), ("date", -1)])
+    await db.budgets.create_index([("user_id", 1), ("month", 1), ("category", 1)])
+    await db.goals.create_index([("user_id", 1), ("created_at", -1)])
+
+    # Seed admin
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@financefocus.app").lower()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()),
+            "email": admin_email,
+            "password_hash": hash_password(admin_password),
+            "name": "Admin",
+            "currency": "USD",
+            "role": "admin",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        logger.info("Seeded admin user %s", admin_email)
+    elif not verify_password(admin_password, existing["password_hash"]):
+        await db.users.update_one(
+            {"email": admin_email},
+            {"$set": {"password_hash": hash_password(admin_password)}},
+        )
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
