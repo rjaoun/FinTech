@@ -1,0 +1,102 @@
+{
+  "theme_and_archetype": {
+    "theme": "LIGHT",
+    "archetype": "1 (Organic & Earthy)",
+    "rationale": "For a premium mobile personal finance tracker, we pivot away from 'corporate blue' and 'fintech-bro dark mode'. We embrace an Organic & Earthy palette (bone-white, sand, forest green, terracotta) to signal financial health as organic growth, reducing anxiety and building trust."
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Manrope",
+      "body": "IBM Plex Sans"
+    },
+    "hierarchy": {
+      "h1": "text-4xl tracking-tight leading-tight font-extrabold",
+      "h2": "text-2xl tracking-tight leading-snug font-bold",
+      "h3": "text-xl leading-snug font-semibold",
+      "body": "text-base leading-relaxed font-normal",
+      "label_overline": "text-xs tracking-[0.2em] uppercase font-semibold"
+    }
+  },
+  "colors": {
+    "background": {
+      "base": "#F9F8F6",
+      "surface": "#F2EFEA",
+      "surface_elevated": "#FFFFFF"
+    },
+    "text": {
+      "main": "#2C2A29",
+      "muted": "#787672",
+      "inverse": "#F9F8F6"
+    },
+    "primary": {
+      "DEFAULT": "#1E3F32",
+      "hover": "#2A5243",
+      "light": "#DCE6E1"
+    },
+    "accents": {
+      "expense_warning": "#C85A40",
+      "income_growth": "#4A7059",
+      "neutral_border": "#E3DFD7"
+    }
+  },
+  "spacing_and_layout": {
+    "container_padding": "p-6 sm:p-8",
+    "element_gap": "gap-6",
+    "border_radius": {
+      "card": "rounded-3xl",
+      "button": "rounded-full",
+      "input": "rounded-xl"
+    },
+    "shadows": {
+      "soft_ambient": "shadow-[0_8px_30px_rgb(44,42,41,0.04)]",
+      "active_lift": "shadow-[0_12px_40px_rgb(44,42,41,0.08)]"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#1E3F32] text-[#F9F8F6] rounded-full py-4 px-8 font-semibold hover:bg-[#2A5243] transition-colors",
+      "secondary": "bg-[#F2EFEA] text-[#2C2A29] rounded-full py-4 px-8 font-semibold hover:bg-[#E3DFD7] transition-colors"
+    },
+    "cards": {
+      "base_style": "bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgb(44,42,41,0.04)] border border-[#E3DFD7]/50",
+      "dashboard_balance_card": "bg-[#1E3F32] rounded-3xl p-8 text-[#F9F8F6] shadow-xl overflow-hidden relative"
+    },
+    "inputs": {
+      "style": "bg-[#F9F8F6] border border-[#E3DFD7] rounded-xl px-4 py-3 text-[#2C2A29] focus:ring-2 focus:ring-[#1E3F32]/20 focus:border-[#1E3F32] transition-all"
+    },
+    "bottom_tab_navigation": {
+      "style": "bg-white/90 backdrop-blur-xl border-t border-[#E3DFD7]/50 pt-4 pb-8 px-6 flex justify-between items-center rounded-t-3xl"
+    }
+  },
+  "icons_and_visuals": {
+    "icon_library": "@phosphor-icons/react",
+    "icon_style": "duotone",
+    "visual_enhancers": "Use pill-shaped status badges, soft gradients on milestone achievements, and organic shapes for empty states."
+  },
+  "image_urls": [
+    {
+      "url": "https://images.unsplash.com/photo-1686715458898-1955478650ec?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwYWJzdHJhY3QlMjBzYW5kJTIwY2xheSUyMHRleHR1cmV8ZW58MHx8fHwxNzc2NjE1NjI1fDA&ixlib=rb-4.1.0&q=85",
+      "category": "background",
+      "description": "Minimalist sand dune texture. Use as a soft, organic background element for the Onboarding screens or Empty States."
+    },
+    {
+      "url": "https://images.unsplash.com/photo-1651684215020-f7a5b6610f23?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTB8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBzbWlsaW5nJTIwaGVhZHNob3QlMjBwb3J0cmFpdHxlbnwwfHx8fDE3NzY2MTU2MTF8MA&ixlib=rb-4.1.0&q=85",
+      "category": "user_avatar",
+      "description": "Professional smiling man. Use for the user profile avatar in the Dashboard header and Profile tab."
+    }
+  ],
+  "accessibility_and_interactions": {
+    "testing_attributes": "All interactive elements (buttons, inputs, tabs, transaction list items) MUST include `data-testid` (e.g., `data-testid=\"add-transaction-button\"`).",
+    "contrast": "Ensure text color contrast meets APCA/WCAG standards. The deep forest green (#1E3F32) provides excellent contrast against bone-white (#F9F8F6).",
+    "motion": "Use smooth transitions (e.g., `transition: transform 0.2s ease, opacity 0.2s ease`) for button presses and card expands. Respect `prefers-reduced-motion`."
+  },
+  "instructions_to_main_agent": [
+    "This is a mobile app (Expo React Native). Since this app uses React Native, translate these Tailwind classes to NativeWind classes, or adapt to standard StyleSheet properties where NativeWind is unavailable.",
+    "Do NOT use generic blue colors. Stick strictly to the Organic & Earthy palette defined in this document.",
+    "For the AI Insights tab, use subtle moss green (#4A7059) highlights to indicate positive financial anomalies, and terracotta (#C85A40) for spending warnings. Do not use standard yellow/red alerts.",
+    "Implement the bottom tab bar with a floating or rounded-top glassmorphism effect.",
+    "Dashboard must utilize the 'Bento Grid' approach, making widgets feel like distinct, physical, rounded blocks rather than flat endless lists.",
+    "For icons, install and use Phosphor icons package compatible with React Native.",
+    "Use standard Expo router for navigation and ensure all interactive elements have appropriate test IDs."
+  ]
+}
