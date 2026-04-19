@@ -12,18 +12,40 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "../src/theme";
 import { api } from "../src/api";
 import { Category } from "../src/types";
 
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+const isValidDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s).getTime());
+
 export default function AddTransaction() {
   const router = useRouter();
-  const [type, setType] = useState<"expense" | "income">("expense");
-  const [amount, setAmount] = useState("");
-  const [description, setDescription] = useState("");
-  const [category, setCategory] = useState<string>("");
+  const params = useLocalSearchParams<{
+    id?: string;
+    amount?: string;
+    description?: string;
+    category?: string;
+    type?: string;
+    date?: string;
+  }>();
+  const isEdit = !!params.id;
+
+  const [type, setType] = useState<"expense" | "income">(
+    (params.type as "expense" | "income") || "expense"
+  );
+  const [amount, setAmount] = useState(params.amount || "");
+  const [description, setDescription] = useState(params.description || "");
+  const [category, setCategory] = useState<string>(params.category || "");
+  const [date, setDate] = useState<string>(
+    params.date ? params.date.slice(0, 10) : todayStr()
+  );
   const [categories, setCategories] = useState<Category[]>([]);
   const [saving, setSaving] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
@@ -37,10 +59,13 @@ export default function AddTransaction() {
       .get("/categories")
       .then((r) => {
         setCategories(r.data);
-        const first = r.data.find((c: Category) => c.type === "expense");
-        if (first) setCategory(first.id);
+        if (!category) {
+          const first = r.data.find((c: Category) => c.type === type);
+          if (first) setCategory(first.id);
+        }
       })
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filteredCats = categories.filter((c) => c.type === type);
@@ -87,15 +112,23 @@ export default function AddTransaction() {
       Alert.alert("Pick a category", "Please select a category.");
       return;
     }
+    if (!isValidDate(date)) {
+      Alert.alert("Invalid date", "Please enter the date as YYYY-MM-DD.");
+      return;
+    }
     setSaving(true);
     try {
-      if (frequency === "once") {
-        await api.post("/transactions", {
-          amount: amt,
-          type,
-          category,
-          description: description.trim(),
-        });
+      const payload = {
+        amount: amt,
+        type,
+        category,
+        description: description.trim(),
+        date: `${date}T00:00:00+00:00`,
+      };
+      if (isEdit) {
+        await api.put(`/transactions/${params.id}`, payload);
+      } else if (frequency === "once") {
+        await api.post("/transactions", payload);
       } else {
         await api.post("/recurring", {
           amount: amt,
@@ -103,6 +136,7 @@ export default function AddTransaction() {
           category,
           description: description.trim(),
           frequency,
+          start_date: `${date}T00:00:00+00:00`,
         });
       }
       router.back();
@@ -113,6 +147,25 @@ export default function AddTransaction() {
     }
   };
 
+  const onDelete = () => {
+    if (!isEdit) return;
+    Alert.alert("Delete transaction?", "This cannot be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await api.delete(`/transactions/${params.id}`);
+            router.back();
+          } catch (e: any) {
+            Alert.alert("Error", e?.response?.data?.detail || "Could not delete.");
+          }
+        },
+      },
+    ]);
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
@@ -120,8 +173,16 @@ export default function AddTransaction() {
           <TouchableOpacity testID="close-tx-modal" onPress={() => router.back()} style={styles.closeBtn}>
             <Ionicons name="close" size={22} color={theme.colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>New transaction</Text>
-          <View style={{ width: 40 }} />
+          <Text style={styles.headerTitle} testID="tx-header-title">
+            {isEdit ? "Edit transaction" : "New transaction"}
+          </Text>
+          {isEdit ? (
+            <TouchableOpacity testID="delete-tx-btn" onPress={onDelete} style={[styles.closeBtn, { backgroundColor: theme.colors.expense + "18" }]}>
+              <Ionicons name="trash-outline" size={18} color={theme.colors.expense} />
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 40 }} />
+          )}
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
@@ -223,41 +284,68 @@ export default function AddTransaction() {
             ))}
           </View>
 
-          {/* Frequency picker */}
-          <Text style={styles.label}>Frequency</Text>
-          <View style={styles.catGrid}>
-            {(
-              [
-                { id: "once", label: "One-time", icon: "ellipse-outline" },
-                { id: "daily", label: "Daily", icon: "sunny-outline" },
-                { id: "weekly", label: "Weekly", icon: "calendar-outline" },
-                { id: "biweekly", label: "Biweekly", icon: "calendar-clear-outline" },
-                { id: "monthly", label: "Monthly", icon: "calendar-number-outline" },
-                { id: "quarterly", label: "Quarterly", icon: "layers-outline" },
-                { id: "yearly", label: "Yearly", icon: "ribbon-outline" },
-              ] as const
-            ).map((f) => (
-              <TouchableOpacity
-                key={f.id}
-                testID={`frequency-${f.id}`}
-                onPress={() => setFrequency(f.id)}
-                style={[
-                  styles.catChip,
-                  frequency === f.id && { backgroundColor: theme.colors.primaryLight, borderColor: theme.colors.primary },
-                ]}
-              >
-                <Ionicons name={f.icon as any} size={14} color={theme.colors.primary} />
-                <Text style={[styles.catName, frequency === f.id && { color: theme.colors.primary }]}>{f.label}</Text>
-              </TouchableOpacity>
-            ))}
+          {/* Date */}
+          <Text style={styles.label}>Date</Text>
+          <View style={styles.dateRow}>
+            <TextInput
+              testID="date-input"
+              value={date}
+              onChangeText={setDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={theme.colors.textMuted}
+              style={[styles.input, { flex: 1 }]}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TouchableOpacity
+              testID="date-today-btn"
+              onPress={() => setDate(todayStr())}
+              style={styles.todayBtn}
+            >
+              <Ionicons name="calendar" size={14} color={theme.colors.primary} />
+              <Text style={styles.todayText}>Today</Text>
+            </TouchableOpacity>
           </View>
-          {frequency !== "once" ? (
-            <View style={styles.freqHintRow} testID="frequency-hint">
-              <Ionicons name="repeat" size={14} color={theme.colors.primary} />
-              <Text style={styles.freqHint}>
-                This will auto-repeat {frequency}. You can pause or remove it from Profile → Recurring.
-              </Text>
-            </View>
+
+          {/* Frequency picker — hidden in edit mode */}
+          {!isEdit ? (
+            <>
+              <Text style={styles.label}>Frequency</Text>
+              <View style={styles.catGrid}>
+                {(
+                  [
+                    { id: "once", label: "One-time", icon: "ellipse-outline" },
+                    { id: "daily", label: "Daily", icon: "sunny-outline" },
+                    { id: "weekly", label: "Weekly", icon: "calendar-outline" },
+                    { id: "biweekly", label: "Biweekly", icon: "calendar-clear-outline" },
+                    { id: "monthly", label: "Monthly", icon: "calendar-number-outline" },
+                    { id: "quarterly", label: "Quarterly", icon: "layers-outline" },
+                    { id: "yearly", label: "Yearly", icon: "ribbon-outline" },
+                  ] as const
+                ).map((f) => (
+                  <TouchableOpacity
+                    key={f.id}
+                    testID={`frequency-${f.id}`}
+                    onPress={() => setFrequency(f.id)}
+                    style={[
+                      styles.catChip,
+                      frequency === f.id && { backgroundColor: theme.colors.primaryLight, borderColor: theme.colors.primary },
+                    ]}
+                  >
+                    <Ionicons name={f.icon as any} size={14} color={theme.colors.primary} />
+                    <Text style={[styles.catName, frequency === f.id && { color: theme.colors.primary }]}>{f.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {frequency !== "once" ? (
+                <View style={styles.freqHintRow} testID="frequency-hint">
+                  <Ionicons name="repeat" size={14} color={theme.colors.primary} />
+                  <Text style={styles.freqHint}>
+                    This will auto-repeat {frequency}. You can pause or remove it from Profile → Recurring.
+                  </Text>
+                </View>
+              ) : null}
+            </>
           ) : null}
 
           <TouchableOpacity
@@ -269,7 +357,7 @@ export default function AddTransaction() {
             {saving ? (
               <ActivityIndicator color={theme.colors.textInverse} />
             ) : (
-              <Text style={styles.saveBtnText}>Save transaction</Text>
+              <Text style={styles.saveBtnText}>{isEdit ? "Save changes" : "Save transaction"}</Text>
             )}
           </TouchableOpacity>
         </ScrollView>
@@ -350,6 +438,15 @@ const styles = StyleSheet.create({
     marginTop: 10, paddingHorizontal: 4,
   },
   freqHint: { fontSize: 12, color: theme.colors.primary, flex: 1, lineHeight: 17 },
+  dateRow: { flexDirection: "row", gap: 8, alignItems: "center" },
+  todayBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 12, paddingVertical: 10,
+    backgroundColor: theme.colors.primaryLight,
+    borderRadius: theme.radius.md,
+    borderWidth: 1, borderColor: theme.colors.primaryLight,
+  },
+  todayText: { color: theme.colors.primary, fontWeight: "700", fontSize: 12 },
   saveBtn: {
     marginTop: theme.spacing.xl, backgroundColor: theme.colors.primary,
     borderRadius: theme.radius.pill, paddingVertical: 16, alignItems: "center",

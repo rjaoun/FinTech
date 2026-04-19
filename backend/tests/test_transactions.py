@@ -174,6 +174,122 @@ class TestTransactionCRUD:
         assert found["category"] == "shopping"
 
 
+class TestTransactionDateField:
+    """Transaction date field tests (new feature)"""
+
+    def test_create_transaction_with_explicit_date(self, base_url, api_client, auth_headers):
+        """POST /api/transactions with explicit date stores that date, not today's date"""
+        explicit_date = "2026-03-15T00:00:00+00:00"
+        payload = {
+            "amount": 42.50,
+            "type": "expense",
+            "category": "food",
+            "description": "TEST_Coffee with friend",
+            "date": explicit_date
+        }
+        
+        # Create with explicit date
+        create_response = api_client.post(
+            f"{base_url}/api/transactions",
+            json=payload,
+            headers=auth_headers
+        )
+        assert create_response.status_code == 200, f"Expected 200, got {create_response.status_code}: {create_response.text}"
+        
+        created = create_response.json()
+        assert created["date"] == explicit_date, f"Expected date {explicit_date}, got {created['date']}"
+        assert created["description"] == "TEST_Coffee with friend"
+        
+        tx_id = created["id"]
+        
+        # GET to verify date persisted correctly
+        get_response = api_client.get(
+            f"{base_url}/api/transactions",
+            headers=auth_headers
+        )
+        transactions = get_response.json()
+        found = next((t for t in transactions if t["id"] == tx_id), None)
+        assert found is not None
+        assert found["date"] == explicit_date, f"Date not persisted correctly. Expected {explicit_date}, got {found['date']}"
+
+    def test_update_transaction_date(self, base_url, api_client, auth_headers):
+        """PUT /api/transactions/{id} updates date field"""
+        # Create transaction with one date
+        create_response = api_client.post(
+            f"{base_url}/api/transactions",
+            json={
+                "amount": 100.00,
+                "type": "expense",
+                "category": "shopping",
+                "description": "TEST_Original purchase",
+                "date": "2026-01-10T00:00:00+00:00"
+            },
+            headers=auth_headers
+        )
+        tx_id = create_response.json()["id"]
+        
+        # Update with new date
+        new_date = "2026-02-20T00:00:00+00:00"
+        update_response = api_client.put(
+            f"{base_url}/api/transactions/{tx_id}",
+            json={
+                "amount": 120.00,
+                "type": "expense",
+                "category": "shopping",
+                "description": "TEST_Updated purchase",
+                "date": new_date
+            },
+            headers=auth_headers
+        )
+        assert update_response.status_code == 200, f"Expected 200, got {update_response.status_code}"
+        
+        updated = update_response.json()
+        assert updated["date"] == new_date, f"Date not updated. Expected {new_date}, got {updated['date']}"
+        assert updated["amount"] == 120.00
+        assert updated["description"] == "TEST_Updated purchase"
+        
+        # GET to verify update persisted
+        get_response = api_client.get(
+            f"{base_url}/api/transactions",
+            headers=auth_headers
+        )
+        transactions = get_response.json()
+        found = next((t for t in transactions if t["id"] == tx_id), None)
+        assert found is not None
+        assert found["date"] == new_date
+
+
+class TestTransactionOwnership:
+    """Transaction ownership and authorization tests"""
+
+    def test_update_other_users_transaction_returns_404(self, base_url, api_client, auth_headers):
+        """PUT /api/transactions/{id} returns 404 for other user's transaction"""
+        # Use a fake UUID that won't belong to admin user
+        fake_id = str(uuid.uuid4())
+        
+        response = api_client.put(
+            f"{base_url}/api/transactions/{fake_id}",
+            json={
+                "amount": 50.00,
+                "type": "expense",
+                "category": "food",
+                "description": "TEST_Attempt to update"
+            },
+            headers=auth_headers
+        )
+        assert response.status_code == 404, f"Expected 404 for other user's transaction, got {response.status_code}"
+
+    def test_delete_other_users_transaction_returns_404(self, base_url, api_client, auth_headers):
+        """DELETE /api/transactions/{id} returns 404 for other user's transaction"""
+        fake_id = str(uuid.uuid4())
+        
+        response = api_client.delete(
+            f"{base_url}/api/transactions/{fake_id}",
+            headers=auth_headers
+        )
+        assert response.status_code == 404, f"Expected 404 for other user's transaction, got {response.status_code}"
+
+
 class TestTransactionAuth:
     """Transaction endpoint authorization tests"""
 

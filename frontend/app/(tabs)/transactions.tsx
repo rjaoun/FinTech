@@ -134,9 +134,22 @@ export default function Transactions() {
           }
           renderItem={({ item }) => {
             const cat = catMap[item.category];
+            const goEdit = () =>
+              router.push({
+                pathname: "/add-transaction",
+                params: {
+                  id: item.id,
+                  amount: String(item.amount),
+                  description: item.description || "",
+                  category: item.category,
+                  type: item.type,
+                  date: item.date,
+                },
+              });
             return (
               <TouchableOpacity
                 testID={`tx-${item.id}`}
+                onPress={goEdit}
                 onLongPress={() => onDelete(item.id)}
                 style={styles.row}
               >
@@ -159,7 +172,7 @@ export default function Transactions() {
                     </Text>
                   </View>
                 </View>
-                <View style={{ alignItems: "flex-end" }}>
+                <View style={styles.rowActions}>
                   <Text
                     style={[
                       styles.amount,
@@ -169,13 +182,24 @@ export default function Transactions() {
                     {item.type === "income" ? "+" : "-"}
                     {formatCurrency(item.amount, currency)}
                   </Text>
-                  <TouchableOpacity
-                    testID={`tx-delete-${item.id}`}
-                    onPress={() => onDelete(item.id)}
-                    style={styles.delBtn}
-                  >
-                    <Ionicons name="trash-outline" size={14} color={theme.colors.textMuted} />
-                  </TouchableOpacity>
+                  <View style={styles.iconBtnRow}>
+                    <TouchableOpacity
+                      testID={`tx-edit-${item.id}`}
+                      onPress={goEdit}
+                      style={styles.iconBtn}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="pencil" size={14} color={theme.colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      testID={`tx-delete-${item.id}`}
+                      onPress={() => onDelete(item.id)}
+                      style={styles.iconBtn}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="trash-outline" size={14} color={theme.colors.expense} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </TouchableOpacity>
             );
@@ -245,5 +269,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4, textTransform: "uppercase",
   },
   amount: { fontSize: 15, fontWeight: "700" },
+  rowActions: { alignItems: "flex-end", gap: 6 },
+  iconBtnRow: { flexDirection: "row", gap: 4 },
+  iconBtn: {
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: theme.colors.surface,
+    alignItems: "center", justifyContent: "center",
+  },
   delBtn: { marginTop: 4, padding: 4 },
 });
