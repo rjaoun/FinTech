@@ -16,8 +16,9 @@ FinanceFocus is a premium personal-finance mobile app (Expo React Native) that h
 4. **Add transaction modal** — Type toggle, large amount entry, description, category grid, **AI category suggestion** button (Claude classifies description → category id).
 5. **Budgets** — Per-category monthly budget with live `spent` calculation and progress bars. Upserts per (user, category, month).
 6. **Savings goals** — Create/delete goals with target + deadline, contribute any amount, progress bars.
-7. **AI Insights** — Claude Sonnet 4.5 reads the last 150 transactions and returns: summary, top categories, anomalies (with severity), tips, next-month forecast. Graceful deterministic fallback if the LLM errors out.
-8. **Profile** — User info, currency display, shortcuts to budgets/AI, sign out.
+7. **Recurring transactions** — Set any transaction to repeat on one of six cadences (daily, weekly, biweekly, monthly, quarterly, yearly). Backend auto-materialises due instances lazily on every read (dashboard, transactions list, recurring list). Rules can be paused/resumed or removed (with optional cleanup of generated history). Each auto-generated transaction carries a visible "Recurring" badge.
+8. **AI Insights** — Claude Sonnet 4.5 reads the last 150 transactions and returns: summary, top categories, anomalies (with severity), tips, next-month forecast. Graceful deterministic fallback if the LLM errors out.
+9. **Profile** — User info, currency display, shortcuts to budgets / recurring / AI, sign out.
 
 ## Design system (from design agent)
 "Organic & Earthy" light theme — bone-white canvas (`#F9F8F6`), deep forest green primary (`#1E3F32`), terracotta expense accent (`#C85A40`), moss income accent (`#4A7059`). Manrope-inspired heavy display type, pill buttons, 3xl-rounded cards, soft ambient shadows.
@@ -35,6 +36,7 @@ FinanceFocus is a premium personal-finance mobile app (Expo React Native) that h
 | POST/GET/DELETE | /budgets | Per-month budgets (upsert) |
 | POST/GET/DELETE | /goals | Savings goals |
 | POST | /goals/{id}/contribute | Add amount |
+| POST/GET/PATCH/DELETE | /recurring | Recurring rules (PATCH toggles active) |
 | POST | /ai/insights | AI spending analysis |
 | POST | /ai/suggest-category | AI category classification |
 
