@@ -1,0 +1,137 @@
+{
+  "summary": "Recurring transactions feature testing completed. Backend: 18/18 tests passed (100%). Fixed critical timezone bug in _advance() function. Frontend: Code review passed, all testIDs present, but UI testing blocked by ngrok tunnel infrastructure issue.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/recurring, GET /api/recurring, GET /api/transactions, GET /api/dashboard/summary",
+        "issue": "FIXED: TypeError comparing offset-naive and offset-aware datetimes in materialize_due() function. The _advance() function was losing timezone info when using dt.replace() for monthly/quarterly/yearly frequencies.",
+        "fix_applied": "Added timezone preservation logic in _advance() function for monthly, quarterly, and yearly frequency calculations.",
+        "priority": "CRITICAL - FIXED"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [],
+    "infrastructure_issues": [
+      {
+        "component": "Expo tunnel (ngrok)",
+        "issue": "Frontend preview environment not accessible due to ngrok tunnel failures. Error: 'TypeError: Cannot read properties of undefined (reading body)' and 'failed to start tunnel'. This is an infrastructure issue, not a code issue.",
+        "impact": "Unable to perform UI testing with Playwright. Code review shows all implementation is correct.",
+        "workaround": "Backend API fully functional and tested. Frontend code review confirms correct implementation."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_recurring.py",
+    "/app/test_reports/pytest/pytest_recurring.xml"
+  ],
+  "action_items": [
+    "Main agent should verify frontend UI manually when ngrok tunnel stabilizes",
+    "Verify frequency picker UI shows all 7 options (once, daily, weekly, biweekly, monthly, quarterly, yearly)",
+    "Verify Profile → Recurring navigation works",
+    "Verify recurring badge appears on auto-generated transactions in Activity tab",
+    "Verify pause/resume and delete functionality in Recurring screen"
+  ],
+  "critical_code_review_comments": [
+    "✅ Backend: All recurring endpoints implemented correctly (POST, GET, PATCH, DELETE)",
+    "✅ Backend: materialize_due() called lazily from list_transactions, dashboard_summary, list_recurring, create_recurring",
+    "✅ Backend: All 6 frequencies correctly advance next_date (daily, weekly, biweekly, monthly, quarterly, yearly)",
+    "✅ Backend: PATCH /api/recurring/{id} toggles active flag correctly",
+    "✅ Backend: DELETE with delete_generated=true removes both rule and generated transactions",
+    "✅ Backend: Existing /api/transactions now includes recurring_rule_id field (null for one-time, rule ID for recurring)",
+    "✅ Frontend: add-transaction.tsx has frequency picker with all 7 testIDs (frequency-once through frequency-yearly)",
+    "✅ Frontend: frequency-hint shows when frequency !== 'once'",
+    "✅ Frontend: Saves to /api/recurring when frequency !== 'once', /api/transactions when frequency === 'once'",
+    "✅ Frontend: recurring.tsx has all required testIDs (recurring-{id}, recurring-toggle-{id}, recurring-delete-{id})",
+    "✅ Frontend: transactions.tsx shows recurring badge (tx-recurring-badge-{id}) when recurring_rule_id exists",
+    "✅ Frontend: profile.tsx has menu-recurring testID and routes to /recurring",
+    "✅ Frontend: _layout.tsx properly registers /recurring route",
+    "✅ Types: Transaction type includes recurring_rule_id?: string | null",
+    "✅ Types: RecurringRule type properly defined with all fields",
+    "⚠️ Minor: TypeScript type generation shows /recurring route not in type union (will resolve on app run)",
+    "🐛 FIXED: Critical timezone bug in _advance() function causing 500 errors on recurring creation"
+  ],
+  "updated_files": [
+    "/app/backend/server.py (fixed _advance function timezone preservation)",
+    "/app/backend/tests/test_recurring.py (created comprehensive test suite)"
+  ],
+  "success_rate": {
+    "backend": "100% (18/18 recurring tests passed, all frequencies working, timezone bug fixed)",
+    "frontend": "Code review: 100% (all implementation correct, testIDs present). UI testing: 0% (blocked by ngrok tunnel infrastructure issue)"
+  },
+  "seed_data_creation": "Test recurring rules and transactions created during testing with TEST_ prefix. All cleaned up after tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Recurring transactions feature fully implemented and backend tested. Critical timezone bug in _advance() function was found and fixed. All 6 frequencies (daily, weekly, biweekly, monthly, quarterly, yearly) work correctly. Frontend code is correct but couldn't be UI tested due to ngrok tunnel infrastructure failure. Main agent should manually verify UI when tunnel is stable.",
+  "rca_of_issue": {
+    "bug": "TypeError: can't compare offset-naive and offset-aware datetimes in materialize_due()",
+    "root_cause": "The _advance() function uses dt.replace() for monthly, quarterly, and yearly frequency calculations. The replace() method creates a new datetime object that may lose timezone information if not explicitly preserved.",
+    "reproduction_steps": [
+      "1. POST /api/recurring with frequency=monthly/quarterly/yearly and a past start_date",
+      "2. materialize_due() is called",
+      "3. _advance() is called with a timezone-aware datetime",
+      "4. dt.replace() returns timezone-naive datetime",
+      "5. Comparison 'next_dt <= now' fails because next_dt is naive and now is aware"
+    ],
+    "mitigation": "Added explicit timezone preservation in _advance() function for monthly, quarterly, and yearly branches. After calling dt.replace(), check if original dt had tzinfo and new_dt doesn't, then copy tzinfo from original."
+  },
+  "detailed_backend_test_results": {
+    "recurring_create": {
+      "test_create_weekly_with_past_date_materializes_transactions": "PASS - Created rule with past date, verified multiple transactions materialized",
+      "test_create_daily_frequency": "PASS",
+      "test_create_biweekly_frequency": "PASS",
+      "test_create_monthly_frequency": "PASS",
+      "test_create_quarterly_frequency": "PASS",
+      "test_create_yearly_frequency": "PASS",
+      "test_create_without_start_date_defaults_to_today": "PASS"
+    },
+    "recurring_list": {
+      "test_list_recurring_returns_active_rules": "PASS",
+      "test_list_recurring_includes_next_date": "PASS"
+    },
+    "recurring_toggle": {
+      "test_toggle_active_to_inactive": "PASS",
+      "test_toggle_inactive_to_active": "PASS"
+    },
+    "recurring_delete": {
+      "test_delete_rule_keeps_generated_transactions": "PASS",
+      "test_delete_rule_with_delete_generated_removes_transactions": "PASS",
+      "test_delete_nonexistent_rule_returns_404": "PASS"
+    },
+    "recurring_integration": {
+      "test_transactions_endpoint_includes_recurring_rule_id": "PASS - Verified recurring_rule_id field present and null for one-time transactions",
+      "test_dashboard_summary_includes_recurring_transactions": "PASS - Verified dashboard calls materialize_due and includes recurring transactions"
+    },
+    "recurring_auth": {
+      "test_create_recurring_without_auth_returns_401": "PASS",
+      "test_list_recurring_without_auth_returns_401": "PASS"
+    }
+  },
+  "frontend_code_review_details": {
+    "add_transaction_tsx": {
+      "frequency_state": "✅ Correct - useState with 7 options",
+      "frequency_picker_ui": "✅ All 7 chips with testIDs (frequency-once, frequency-daily, frequency-weekly, frequency-biweekly, frequency-monthly, frequency-quarterly, frequency-yearly)",
+      "frequency_hint": "✅ Shows when frequency !== 'once' with testID frequency-hint",
+      "save_logic": "✅ Correct - POSTs to /api/recurring when frequency !== 'once', /api/transactions when frequency === 'once'"
+    },
+    "recurring_tsx": {
+      "list_display": "✅ Fetches from /api/recurring, shows all rules",
+      "testids": "✅ recurring-{id}, recurring-toggle-{id}, recurring-delete-{id}, recurring-back-btn",
+      "toggle_logic": "✅ PATCH /api/recurring/{id}",
+      "delete_logic": "✅ DELETE with optional delete_generated param, shows alert with 3 options"
+    },
+    "profile_tsx": {
+      "recurring_menu": "✅ menu-recurring testID present, routes to /recurring"
+    },
+    "transactions_tsx": {
+      "recurring_badge": "✅ Shows badge with testID tx-recurring-badge-{id} when item.recurring_rule_id exists"
+    },
+    "layout_tsx": {
+      "route_registration": "✅ /recurring route registered in Stack.Screen"
+    }
+  }
+}

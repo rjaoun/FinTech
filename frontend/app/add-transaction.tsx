@@ -28,6 +28,9 @@ export default function AddTransaction() {
   const [saving, setSaving] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [aiSuggested, setAiSuggested] = useState<string | null>(null);
+  const [frequency, setFrequency] = useState<
+    "once" | "daily" | "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly"
+  >("once");
 
   useEffect(() => {
     api
@@ -86,12 +89,22 @@ export default function AddTransaction() {
     }
     setSaving(true);
     try {
-      await api.post("/transactions", {
-        amount: amt,
-        type,
-        category,
-        description: description.trim(),
-      });
+      if (frequency === "once") {
+        await api.post("/transactions", {
+          amount: amt,
+          type,
+          category,
+          description: description.trim(),
+        });
+      } else {
+        await api.post("/recurring", {
+          amount: amt,
+          type,
+          category,
+          description: description.trim(),
+          frequency,
+        });
+      }
       router.back();
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.detail || "Could not save transaction.");
@@ -210,6 +223,43 @@ export default function AddTransaction() {
             ))}
           </View>
 
+          {/* Frequency picker */}
+          <Text style={styles.label}>Frequency</Text>
+          <View style={styles.catGrid}>
+            {(
+              [
+                { id: "once", label: "One-time", icon: "ellipse-outline" },
+                { id: "daily", label: "Daily", icon: "sunny-outline" },
+                { id: "weekly", label: "Weekly", icon: "calendar-outline" },
+                { id: "biweekly", label: "Biweekly", icon: "calendar-clear-outline" },
+                { id: "monthly", label: "Monthly", icon: "calendar-number-outline" },
+                { id: "quarterly", label: "Quarterly", icon: "layers-outline" },
+                { id: "yearly", label: "Yearly", icon: "ribbon-outline" },
+              ] as const
+            ).map((f) => (
+              <TouchableOpacity
+                key={f.id}
+                testID={`frequency-${f.id}`}
+                onPress={() => setFrequency(f.id)}
+                style={[
+                  styles.catChip,
+                  frequency === f.id && { backgroundColor: theme.colors.primaryLight, borderColor: theme.colors.primary },
+                ]}
+              >
+                <Ionicons name={f.icon as any} size={14} color={theme.colors.primary} />
+                <Text style={[styles.catName, frequency === f.id && { color: theme.colors.primary }]}>{f.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {frequency !== "once" ? (
+            <View style={styles.freqHintRow} testID="frequency-hint">
+              <Ionicons name="repeat" size={14} color={theme.colors.primary} />
+              <Text style={styles.freqHint}>
+                This will auto-repeat {frequency}. You can pause or remove it from Profile → Recurring.
+              </Text>
+            </View>
+          ) : null}
+
           <TouchableOpacity
             testID="save-tx-btn"
             onPress={save}
@@ -295,6 +345,11 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.pill,
   },
   catName: { fontSize: 13, fontWeight: "600", color: theme.colors.textMuted },
+  freqHintRow: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    marginTop: 10, paddingHorizontal: 4,
+  },
+  freqHint: { fontSize: 12, color: theme.colors.primary, flex: 1, lineHeight: 17 },
   saveBtn: {
     marginTop: theme.spacing.xl, backgroundColor: theme.colors.primary,
     borderRadius: theme.radius.pill, paddingVertical: 16, alignItems: "center",

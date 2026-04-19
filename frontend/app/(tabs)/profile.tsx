@@ -56,6 +56,13 @@ export default function Profile() {
           />
           <View style={styles.divider} />
           <MenuRow
+            icon="repeat-outline"
+            label="Recurring"
+            onPress={() => router.push("/recurring")}
+            testID="menu-recurring"
+          />
+          <View style={styles.divider} />
+          <MenuRow
             icon="sparkles-outline"
             label="AI coach"
             onPress={() => router.push("/(tabs)/insights")}

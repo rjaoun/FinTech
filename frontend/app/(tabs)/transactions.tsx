@@ -147,9 +147,17 @@ export default function Transactions() {
                   <Text style={styles.rowTitle} numberOfLines={1}>
                     {item.description || cat?.name || item.category}
                   </Text>
-                  <Text style={styles.rowMeta}>
-                    {cat?.name || item.category} · {item.date.slice(0, 10)}
-                  </Text>
+                  <View style={styles.metaRow}>
+                    {item.recurring_rule_id ? (
+                      <View style={styles.recurBadge} testID={`tx-recurring-badge-${item.id}`}>
+                        <Ionicons name="repeat" size={10} color={theme.colors.primary} />
+                        <Text style={styles.recurBadgeText}>Recurring</Text>
+                      </View>
+                    ) : null}
+                    <Text style={styles.rowMeta}>
+                      {cat?.name || item.category} · {item.date.slice(0, 10)}
+                    </Text>
+                  </View>
                 </View>
                 <View style={{ alignItems: "flex-end" }}>
                   <Text
@@ -226,6 +234,16 @@ const styles = StyleSheet.create({
   icon: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
   rowTitle: { fontSize: 15, fontWeight: "600", color: theme.colors.text },
   rowMeta: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2 },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3, flexWrap: "wrap" },
+  recurBadge: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    paddingHorizontal: 6, paddingVertical: 2,
+    backgroundColor: theme.colors.primaryLight, borderRadius: theme.radius.pill,
+  },
+  recurBadgeText: {
+    fontSize: 9, fontWeight: "700", color: theme.colors.primary,
+    letterSpacing: 0.4, textTransform: "uppercase",
+  },
   amount: { fontSize: 15, fontWeight: "700" },
   delBtn: { marginTop: 4, padding: 4 },
 });

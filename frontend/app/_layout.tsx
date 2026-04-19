@@ -35,6 +35,7 @@ function RootGate() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="add-transaction" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
       <Stack.Screen name="budgets" options={{ presentation: "card" }} />
+      <Stack.Screen name="recurring" options={{ presentation: "card" }} />
     </Stack>
   );
 }

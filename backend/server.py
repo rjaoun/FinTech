@@ -123,6 +123,30 @@ class TransactionOut(TransactionIn):
     id: str
     user_id: str
     created_at: str
+    recurring_rule_id: Optional[str] = None
+
+RECURRING_FREQUENCIES = ("daily", "weekly", "biweekly", "monthly", "quarterly", "yearly")
+
+class RecurringIn(BaseModel):
+    amount: float
+    type: Literal["income", "expense"]
+    category: str
+    description: str = ""
+    frequency: Literal["daily", "weekly", "biweekly", "monthly", "quarterly", "yearly"]
+    start_date: Optional[str] = None  # ISO YYYY-MM-DD; defaults to today
+
+class RecurringOut(BaseModel):
+    id: str
+    user_id: str
+    amount: float
+    type: str
+    category: str
+    description: str
+    frequency: str
+    start_date: str
+    next_date: str
+    active: bool
+    created_at: str
 
 class BudgetIn(BaseModel):
     category: str
@@ -217,6 +241,90 @@ async def logout(user: dict = Depends(get_current_user)):
 async def list_categories(user: dict = Depends(get_current_user)):
     return DEFAULT_CATEGORIES
 
+# ---------- RECURRING HELPERS ----------
+def _parse_date(s: str) -> datetime:
+    # Accept both YYYY-MM-DD and ISO strings. Always return timezone-aware (UTC).
+    s = s.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+    except Exception:
+        dt = datetime.strptime(s[:10], "%Y-%m-%d")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+def _advance(dt: datetime, frequency: str) -> datetime:
+    if frequency == "daily":
+        return dt + timedelta(days=1)
+    if frequency == "weekly":
+        return dt + timedelta(days=7)
+    if frequency == "biweekly":
+        return dt + timedelta(days=14)
+    if frequency == "monthly":
+        # approximate calendar month
+        year = dt.year + (1 if dt.month == 12 else 0)
+        month = 1 if dt.month == 12 else dt.month + 1
+        day = min(dt.day, 28)
+        new_dt = dt.replace(year=year, month=month, day=day)
+        # Preserve timezone
+        if dt.tzinfo and new_dt.tzinfo is None:
+            new_dt = new_dt.replace(tzinfo=dt.tzinfo)
+        return new_dt
+    if frequency == "quarterly":
+        month = dt.month + 3
+        year = dt.year + (month - 1) // 12
+        month = ((month - 1) % 12) + 1
+        day = min(dt.day, 28)
+        new_dt = dt.replace(year=year, month=month, day=day)
+        # Preserve timezone
+        if dt.tzinfo and new_dt.tzinfo is None:
+            new_dt = new_dt.replace(tzinfo=dt.tzinfo)
+        return new_dt
+    if frequency == "yearly":
+        try:
+            new_dt = dt.replace(year=dt.year + 1)
+        except ValueError:
+            new_dt = dt.replace(year=dt.year + 1, day=28)
+        # Preserve timezone
+        if dt.tzinfo and new_dt.tzinfo is None:
+            new_dt = new_dt.replace(tzinfo=dt.tzinfo)
+        return new_dt
+    return dt + timedelta(days=1)
+
+async def materialize_due(user_id: str) -> int:
+    """Create any past-due transactions for this user's active recurring rules. Returns count created."""
+    now = datetime.now(timezone.utc)
+    rules = await db.recurring_rules.find(
+        {"user_id": user_id, "active": True}, {"_id": 0}
+    ).to_list(length=500)
+    created = 0
+    for rule in rules:
+        next_dt = _parse_date(rule["next_date"])
+        safety = 0
+        while next_dt <= now and safety < 500:
+            tid = str(uuid.uuid4())
+            doc = {
+                "id": tid,
+                "user_id": user_id,
+                "amount": float(rule["amount"]),
+                "type": rule["type"],
+                "category": rule["category"],
+                "description": rule["description"],
+                "date": next_dt.isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "recurring_rule_id": rule["id"],
+            }
+            await db.transactions.insert_one(doc)
+            created += 1
+            next_dt = _advance(next_dt, rule["frequency"])
+            safety += 1
+        # Persist the new next_date
+        await db.recurring_rules.update_one(
+            {"id": rule["id"], "user_id": user_id},
+            {"$set": {"next_date": next_dt.isoformat()}},
+        )
+    return created
+
 # ---------- TRANSACTIONS ----------
 @api_router.post("/transactions", response_model=TransactionOut)
 async def create_transaction(body: TransactionIn, user: dict = Depends(get_current_user)):
@@ -231,6 +339,7 @@ async def create_transaction(body: TransactionIn, user: dict = Depends(get_curre
         "description": body.description or "",
         "date": body.date or now,
         "created_at": now,
+        "recurring_rule_id": None,
     }
     await db.transactions.insert_one(doc)
     doc.pop("_id", None)
@@ -243,6 +352,7 @@ async def list_transactions(
     type: Optional[str] = None,
     category: Optional[str] = None,
 ):
+    await materialize_due(user["id"])
     q: dict = {"user_id": user["id"]}
     if type:
         q["type"] = type
@@ -280,6 +390,7 @@ async def update_transaction(tid: str, body: TransactionIn, user: dict = Depends
 # ---------- DASHBOARD ----------
 @api_router.get("/dashboard/summary")
 async def dashboard_summary(user: dict = Depends(get_current_user)):
+    await materialize_due(user["id"])
     txs = await db.transactions.find({"user_id": user["id"]}, {"_id": 0}).to_list(length=5000)
     total_income = sum(t["amount"] for t in txs if t["type"] == "income")
     total_expense = sum(t["amount"] for t in txs if t["type"] == "expense")
@@ -440,6 +551,64 @@ async def delete_goal(gid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Goal not found")
     return {"ok": True}
 
+# ---------- RECURRING RULES ----------
+@api_router.post("/recurring", response_model=RecurringOut)
+async def create_recurring(body: RecurringIn, user: dict = Depends(get_current_user)):
+    rid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    start_dt = _parse_date(body.start_date) if body.start_date else now
+    doc = {
+        "id": rid,
+        "user_id": user["id"],
+        "amount": float(body.amount),
+        "type": body.type,
+        "category": body.category,
+        "description": body.description or "",
+        "frequency": body.frequency,
+        "start_date": start_dt.isoformat(),
+        "next_date": start_dt.isoformat(),
+        "active": True,
+        "created_at": now.isoformat(),
+    }
+    await db.recurring_rules.insert_one(doc)
+    # Materialize any already-due instances (including today's)
+    await materialize_due(user["id"])
+    fresh = await db.recurring_rules.find_one({"id": rid}, {"_id": 0})
+    return fresh
+
+@api_router.get("/recurring", response_model=List[RecurringOut])
+async def list_recurring(user: dict = Depends(get_current_user)):
+    # Opportunistically catch up any due instances
+    await materialize_due(user["id"])
+    return await db.recurring_rules.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(length=200)
+
+@api_router.delete("/recurring/{rid}")
+async def delete_recurring(
+    rid: str,
+    user: dict = Depends(get_current_user),
+    delete_generated: bool = False,
+):
+    rule = await db.recurring_rules.find_one({"id": rid, "user_id": user["id"]})
+    if not rule:
+        raise HTTPException(status_code=404, detail="Recurring rule not found")
+    await db.recurring_rules.delete_one({"id": rid, "user_id": user["id"]})
+    if delete_generated:
+        await db.transactions.delete_many({"user_id": user["id"], "recurring_rule_id": rid})
+    return {"ok": True}
+
+@api_router.patch("/recurring/{rid}", response_model=RecurringOut)
+async def toggle_recurring(rid: str, user: dict = Depends(get_current_user)):
+    rule = await db.recurring_rules.find_one({"id": rid, "user_id": user["id"]})
+    if not rule:
+        raise HTTPException(status_code=404, detail="Recurring rule not found")
+    new_active = not rule.get("active", True)
+    await db.recurring_rules.update_one(
+        {"id": rid, "user_id": user["id"]},
+        {"$set": {"active": new_active}},
+    )
+    fresh = await db.recurring_rules.find_one({"id": rid}, {"_id": 0})
+    return fresh
+
 # ---------- AI INSIGHTS ----------
 async def _ai_chat(session_id: str, system: str, prompt: str) -> str:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -599,6 +768,7 @@ async def startup():
     await db.transactions.create_index([("user_id", 1), ("date", -1)])
     await db.budgets.create_index([("user_id", 1), ("month", 1), ("category", 1)])
     await db.goals.create_index([("user_id", 1), ("created_at", -1)])
+    await db.recurring_rules.create_index([("user_id", 1), ("active", 1)])
 
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@financefocus.app").lower()

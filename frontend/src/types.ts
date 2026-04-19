@@ -15,6 +15,23 @@ export type Transaction = {
   description: string;
   date: string;
   created_at: string;
+  recurring_rule_id?: string | null;
+};
+
+export type Frequency = "daily" | "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly";
+
+export type RecurringRule = {
+  id: string;
+  user_id: string;
+  amount: number;
+  type: "income" | "expense";
+  category: string;
+  description: string;
+  frequency: Frequency;
+  start_date: string;
+  next_date: string;
+  active: boolean;
+  created_at: string;
 };
 
 export type DashboardSummary = {
