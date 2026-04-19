@@ -29,6 +29,7 @@ export type RecurringRule = {
   description: string;
   frequency: Frequency;
   start_date: string;
+  end_date?: string | null;
   next_date: string;
   active: boolean;
   created_at: string;

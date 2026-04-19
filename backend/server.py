@@ -134,6 +134,7 @@ class RecurringIn(BaseModel):
     description: str = ""
     frequency: Literal["daily", "weekly", "biweekly", "monthly", "quarterly", "yearly"]
     start_date: Optional[str] = None  # ISO YYYY-MM-DD; defaults to today
+    end_date: Optional[str] = None  # ISO YYYY-MM-DD; optional stop date
 
 class RecurringOut(BaseModel):
     id: str
@@ -144,6 +145,7 @@ class RecurringOut(BaseModel):
     description: str
     frequency: str
     start_date: str
+    end_date: Optional[str] = None
     next_date: str
     active: bool
     created_at: str
@@ -300,8 +302,11 @@ async def materialize_due(user_id: str) -> int:
     created = 0
     for rule in rules:
         next_dt = _parse_date(rule["next_date"])
+        end_dt = _parse_date(rule["end_date"]) if rule.get("end_date") else None
         safety = 0
         while next_dt <= now and safety < 500:
+            if end_dt and next_dt > end_dt:
+                break
             tid = str(uuid.uuid4())
             doc = {
                 "id": tid,
@@ -318,10 +323,12 @@ async def materialize_due(user_id: str) -> int:
             created += 1
             next_dt = _advance(next_dt, rule["frequency"])
             safety += 1
-        # Persist the new next_date
+        update: dict = {"next_date": next_dt.isoformat()}
+        if end_dt and next_dt > end_dt:
+            update["active"] = False
         await db.recurring_rules.update_one(
             {"id": rule["id"], "user_id": user_id},
-            {"$set": {"next_date": next_dt.isoformat()}},
+            {"$set": update},
         )
     return created
 
@@ -557,6 +564,12 @@ async def create_recurring(body: RecurringIn, user: dict = Depends(get_current_u
     rid = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     start_dt = _parse_date(body.start_date) if body.start_date else now
+    end_dt_iso: Optional[str] = None
+    if body.end_date:
+        end_dt = _parse_date(body.end_date)
+        if end_dt < start_dt:
+            raise HTTPException(status_code=400, detail="end_date must be after start_date")
+        end_dt_iso = end_dt.isoformat()
     doc = {
         "id": rid,
         "user_id": user["id"],
@@ -566,6 +579,7 @@ async def create_recurring(body: RecurringIn, user: dict = Depends(get_current_u
         "description": body.description or "",
         "frequency": body.frequency,
         "start_date": start_dt.isoformat(),
+        "end_date": end_dt_iso,
         "next_date": start_dt.isoformat(),
         "active": True,
         "created_at": now.isoformat(),

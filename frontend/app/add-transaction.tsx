@@ -17,6 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { theme } from "../src/theme";
 import { api } from "../src/api";
 import { Category } from "../src/types";
+import DatePicker from "../src/components/DatePicker";
 
 const todayStr = () => {
   const d = new Date();
@@ -24,6 +25,16 @@ const todayStr = () => {
 };
 
 const isValidDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s).getTime());
+
+// Combine a YYYY-MM-DD with the current time-of-day so transactions sort by insertion order within the same day.
+function toIsoWithNowTime(ymd: string): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const hh = pad(now.getHours());
+  const mm = pad(now.getMinutes());
+  const ss = pad(now.getSeconds());
+  return `${ymd}T${hh}:${mm}:${ss}`;
+}
 
 export default function AddTransaction() {
   const router = useRouter();
@@ -53,6 +64,7 @@ export default function AddTransaction() {
   const [frequency, setFrequency] = useState<
     "once" | "daily" | "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly"
   >("once");
+  const [endDate, setEndDate] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -118,25 +130,32 @@ export default function AddTransaction() {
     }
     setSaving(true);
     try {
+      const isoDate = toIsoWithNowTime(date);
       const payload = {
         amount: amt,
         type,
         category,
         description: description.trim(),
-        date: `${date}T00:00:00+00:00`,
+        date: isoDate,
       };
       if (isEdit) {
         await api.put(`/transactions/${params.id}`, payload);
       } else if (frequency === "once") {
         await api.post("/transactions", payload);
       } else {
+        if (endDate && endDate < date) {
+          Alert.alert("Invalid end date", "End date must be on or after the start date.");
+          setSaving(false);
+          return;
+        }
         await api.post("/recurring", {
           amount: amt,
           type,
           category,
           description: description.trim(),
           frequency,
-          start_date: `${date}T00:00:00+00:00`,
+          start_date: isoDate,
+          end_date: endDate ? toIsoWithNowTime(endDate) : null,
         });
       }
       router.back();
@@ -286,26 +305,7 @@ export default function AddTransaction() {
 
           {/* Date */}
           <Text style={styles.label}>Date</Text>
-          <View style={styles.dateRow}>
-            <TextInput
-              testID="date-input"
-              value={date}
-              onChangeText={setDate}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={theme.colors.textMuted}
-              style={[styles.input, { flex: 1 }]}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <TouchableOpacity
-              testID="date-today-btn"
-              onPress={() => setDate(todayStr())}
-              style={styles.todayBtn}
-            >
-              <Ionicons name="calendar" size={14} color={theme.colors.primary} />
-              <Text style={styles.todayText}>Today</Text>
-            </TouchableOpacity>
-          </View>
+          <DatePicker testID="date-picker" value={date} onChange={(v) => v && setDate(v)} />
 
           {/* Frequency picker — hidden in edit mode */}
           {!isEdit ? (
@@ -338,12 +338,25 @@ export default function AddTransaction() {
                 ))}
               </View>
               {frequency !== "once" ? (
-                <View style={styles.freqHintRow} testID="frequency-hint">
-                  <Ionicons name="repeat" size={14} color={theme.colors.primary} />
-                  <Text style={styles.freqHint}>
-                    This will auto-repeat {frequency}. You can pause or remove it from Profile → Recurring.
-                  </Text>
-                </View>
+                <>
+                  <Text style={styles.label}>Repeat until (optional)</Text>
+                  <DatePicker
+                    testID="end-date-picker"
+                    value={endDate}
+                    onChange={setEndDate}
+                    clearable
+                    minDate={date}
+                    placeholder="No end date — repeats forever"
+                  />
+                  <View style={styles.freqHintRow} testID="frequency-hint">
+                    <Ionicons name="repeat" size={14} color={theme.colors.primary} />
+                    <Text style={styles.freqHint}>
+                      {endDate
+                        ? `Auto-repeats ${frequency} until ${endDate}. Pause anytime from Profile → Recurring.`
+                        : `Auto-repeats ${frequency} with no end date. Pause anytime from Profile → Recurring.`}
+                    </Text>
+                  </View>
+                </>
               ) : null}
             </>
           ) : null}

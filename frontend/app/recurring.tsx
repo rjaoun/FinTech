@@ -138,6 +138,7 @@ export default function Recurring() {
                     <Text style={styles.nextText}>
                       {r.active ? "Next: " : "Paused · next would be "}
                       {r.next_date.slice(0, 10)}
+                      {r.end_date ? `  ·  until ${r.end_date.slice(0, 10)}` : ""}
                     </Text>
                     <View style={styles.actions}>
                       <TouchableOpacity
