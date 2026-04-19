@@ -12,8 +12,8 @@ FinanceFocus is a premium personal-finance mobile app (Expo React Native) that h
 ## Features shipped
 1. **Authentication** — JWT Bearer token auth (register, login, /me, logout). Tokens persisted with `expo-secure-store` on device (localStorage fallback for web preview). Admin user seeded at startup.
 2. **Dashboard (Home)** — Balance card, monthly income/expense, 6-month bar rhythm, recent activity, quick actions (Add transaction / Budgets).
-3. **Activity (Transactions)** — Full CRUD, long-press delete, search + filter chips (All / Income / Expense).
-4. **Add transaction modal** — Type toggle, large amount entry, description, category grid, **AI category suggestion** button (Claude classifies description → category id).
+3. **Activity (Transactions)** — Full CRUD with **tap-to-edit** rows, inline pencil and trash icon on every row, long-press shortcut to delete, search + filter chips (All / Income / Expense). When editing, the Add-Transaction screen pre-fills all fields, hides the Frequency picker, and exposes a header trash icon for one-tap delete.
+4. **Add / Edit transaction screen** — Type toggle, large amount entry, description, category grid, **date picker (YYYY-MM-DD + "Today" quick-set)**, Frequency picker (one-time + six recurring cadences), AI category suggestion button (Claude classifies description → category id). Doubles as the edit screen via route params.
 5. **Budgets** — Per-category monthly budget with live `spent` calculation and progress bars. Upserts per (user, category, month).
 6. **Savings goals** — Create/delete goals with target + deadline, contribute any amount, progress bars.
 7. **Recurring transactions** — Set any transaction to repeat on one of six cadences (daily, weekly, biweekly, monthly, quarterly, yearly). Backend auto-materialises due instances lazily on every read (dashboard, transactions list, recurring list). Rules can be paused/resumed or removed (with optional cleanup of generated history). Each auto-generated transaction carries a visible "Recurring" badge.
