@@ -11,7 +11,8 @@ FinanceFocus is a premium personal-finance mobile app (Expo React Native) that h
 
 ## Features shipped
 1. **Authentication** — JWT Bearer token auth (register, login, /me, logout). Tokens persisted with `expo-secure-store` on device (localStorage fallback for web preview). Admin user seeded at startup.
-2. **Dashboard (Home)** — Balance card, monthly income/expense, 6-month bar rhythm, recent activity, quick actions (Add transaction / Budgets).
+2. **Dashboard (Home)** — Monthly carousel at the top (prev/next chevrons + "Jump to current"). Balance card, monthly income/expense, 6-month bar rhythm and recent activity ALL re-render for the selected month. Quick actions (Add transaction · Calendar).
+8. **Calendar view** — Tap-a-day month grid with green (income) and red (expense) dots. For future days, projected upcoming recurring transactions appear as faded dots. Tapping any day reveals its full event list with "Recurring" and "Upcoming" pills. Totals at the top split real + upcoming amounts.
 3. **Activity (Transactions)** — Full CRUD with **tap-to-edit** rows, inline pencil and trash icon on every row, long-press shortcut to delete, search + filter chips (All / Income / Expense). When editing, the Add-Transaction screen pre-fills all fields, hides the Frequency picker, and exposes a header trash icon for one-tap delete.
 4. **Add / Edit transaction screen** — Type toggle, large amount entry, description, category grid, **date picker (YYYY-MM-DD + "Today" quick-set)**, Frequency picker (one-time + six recurring cadences), AI category suggestion button (Claude classifies description → category id). Doubles as the edit screen via route params.
 5. **Budgets** — Per-category monthly budget with live `spent` calculation and progress bars. Upserts per (user, category, month).
@@ -32,7 +33,8 @@ FinanceFocus is a premium personal-finance mobile app (Expo React Native) that h
 | POST | /auth/logout | No-op (stateless) |
 | GET  | /categories | 15 seeded categories |
 | POST/GET/PUT/DELETE | /transactions | CRUD |
-| GET  | /dashboard/summary | Aggregated metrics |
+| GET  | /dashboard/summary?month=YYYY-MM | Aggregated metrics for the chosen month (defaults to current) |
+| GET  | /calendar?month=YYYY-MM | Per-day income/expense aggregates including projected recurring |
 | POST/GET/DELETE | /budgets | Per-month budgets (upsert) |
 | POST/GET/DELETE | /goals | Savings goals |
 | POST | /goals/{id}/contribute | Add amount |
