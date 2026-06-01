@@ -16,6 +16,24 @@ import { api } from "../../src/api";
 import { useAuth } from "../../src/auth";
 import { DashboardSummary, Category } from "../../src/types";
 
+const MONTH_NAMES_FULL = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function ymd(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function shiftMonth(s: string, delta: number): string {
+  const [y, m] = s.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return ymd(d);
+}
+function humanMonth(s: string): string {
+  const [y, m] = s.split("-").map(Number);
+  return `${MONTH_NAMES_FULL[m - 1]} ${y}`;
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
@@ -23,11 +41,12 @@ export default function Dashboard() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [month, setMonth] = useState<string>(() => ymd(new Date()));
 
   const load = useCallback(async () => {
     try {
       const [s, c] = await Promise.all([
-        api.get("/dashboard/summary"),
+        api.get(`/dashboard/summary?month=${month}`),
         api.get("/categories"),
       ]);
       setSummary(s.data);
@@ -38,7 +57,7 @@ export default function Dashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [month]);
 
   useFocusEffect(
     useCallback(() => {
@@ -90,11 +109,39 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
+        {/* Month carousel */}
+        <View style={styles.monthBar} testID="month-carousel">
+          <TouchableOpacity
+            testID="month-prev"
+            onPress={() => setMonth((m) => shiftMonth(m, -1))}
+            style={styles.monthArrow}
+          >
+            <Ionicons name="chevron-back" size={18} color={theme.colors.text} />
+          </TouchableOpacity>
+          <View style={styles.monthCenter}>
+            <Text style={styles.monthLabel} testID="month-label">{humanMonth(month)}</Text>
+            {month !== ymd(new Date()) ? (
+              <TouchableOpacity testID="month-today" onPress={() => setMonth(ymd(new Date()))}>
+                <Text style={styles.monthTodayLink}>Jump to current</Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={styles.monthSubtle}>This month</Text>
+            )}
+          </View>
+          <TouchableOpacity
+            testID="month-next"
+            onPress={() => setMonth((m) => shiftMonth(m, 1))}
+            style={styles.monthArrow}
+          >
+            <Ionicons name="chevron-forward" size={18} color={theme.colors.text} />
+          </TouchableOpacity>
+        </View>
+
         {/* Balance card */}
         <View style={styles.balanceCard} testID="balance-card">
-          <Text style={styles.balanceLabel}>Total balance</Text>
+          <Text style={styles.balanceLabel}>Balance · {humanMonth(month)}</Text>
           <Text style={styles.balanceValue} testID="balance-value">
-            {formatCurrency(summary?.balance ?? 0, currency)}
+            {formatCurrency(summary?.month_balance ?? 0, currency)}
           </Text>
           <View style={styles.balanceRow}>
             <View style={styles.balanceCell}>
@@ -130,12 +177,12 @@ export default function Dashboard() {
             <Text style={[styles.quickText, { color: theme.colors.textInverse }]}>Add transaction</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            testID="budgets-cta"
+            testID="calendar-cta"
             style={[styles.quickBtn, { backgroundColor: theme.colors.surface }]}
-            onPress={() => router.push("/budgets")}
+            onPress={() => router.push({ pathname: "/calendar", params: { month } })}
           >
-            <Ionicons name="pie-chart-outline" size={18} color={theme.colors.text} />
-            <Text style={[styles.quickText, { color: theme.colors.text }]}>Budgets</Text>
+            <Ionicons name="calendar-outline" size={18} color={theme.colors.text} />
+            <Text style={[styles.quickText, { color: theme.colors.text }]}>Calendar</Text>
           </TouchableOpacity>
         </View>
 
@@ -239,6 +286,23 @@ const styles = StyleSheet.create({
   },
   overline: { fontSize: 11, letterSpacing: 3, color: theme.colors.textMuted, fontWeight: "600" },
   hello: { fontSize: 28, fontWeight: "800", color: theme.colors.text, marginTop: 4, letterSpacing: -0.5 },
+  monthBar: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    backgroundColor: theme.colors.surfaceElevated,
+    borderRadius: theme.radius.pill,
+    paddingVertical: 8, paddingHorizontal: 8,
+    marginBottom: theme.spacing.md,
+    borderWidth: 1, borderColor: theme.colors.border,
+  },
+  monthArrow: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: theme.colors.surface,
+    alignItems: "center", justifyContent: "center",
+  },
+  monthCenter: { flex: 1, alignItems: "center" },
+  monthLabel: { fontSize: 15, fontWeight: "700", color: theme.colors.text, letterSpacing: -0.2 },
+  monthSubtle: { fontSize: 11, color: theme.colors.textMuted, marginTop: 2 },
+  monthTodayLink: { fontSize: 11, color: theme.colors.primary, marginTop: 2, fontWeight: "600" },
   avatar: {
     width: 44,
     height: 44,

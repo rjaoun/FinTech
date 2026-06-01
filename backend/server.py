@@ -396,7 +396,10 @@ async def update_transaction(tid: str, body: TransactionIn, user: dict = Depends
 
 # ---------- DASHBOARD ----------
 @api_router.get("/dashboard/summary")
-async def dashboard_summary(user: dict = Depends(get_current_user)):
+async def dashboard_summary(
+    user: dict = Depends(get_current_user),
+    month: Optional[str] = None,  # YYYY-MM; defaults to current
+):
     await materialize_due(user["id"])
     txs = await db.transactions.find({"user_id": user["id"]}, {"_id": 0}).to_list(length=5000)
     total_income = sum(t["amount"] for t in txs if t["type"] == "income")
@@ -404,11 +407,13 @@ async def dashboard_summary(user: dict = Depends(get_current_user)):
     balance = total_income - total_expense
 
     now = datetime.now(timezone.utc)
-    this_month = now.strftime("%Y-%m")
+    target_month = month if month else now.strftime("%Y-%m")
     month_income = 0.0
     month_expense = 0.0
     by_category: dict = {}
     monthly: dict = {}
+    month_cumulative_balance = 0.0  # cumulative balance up to end of target_month
+    month_txs: list = []
     for t in txs:
         try:
             dt = datetime.fromisoformat(t["date"].replace("Z", "+00:00"))
@@ -417,18 +422,41 @@ async def dashboard_summary(user: dict = Depends(get_current_user)):
         key = dt.strftime("%Y-%m")
         monthly.setdefault(key, {"income": 0.0, "expense": 0.0})
         monthly[key][t["type"]] += t["amount"]
-        if key == this_month:
+        if key <= target_month:
+            if t["type"] == "income":
+                month_cumulative_balance += t["amount"]
+            else:
+                month_cumulative_balance -= t["amount"]
+        if key == target_month:
+            month_txs.append(t)
             if t["type"] == "income":
                 month_income += t["amount"]
             else:
                 month_expense += t["amount"]
                 by_category[t["category"]] = by_category.get(t["category"], 0.0) + t["amount"]
 
-    # Sort monthly last 6 months
-    months_sorted = sorted(monthly.keys())[-6:]
+    # 6-month series ending at target_month
+    try:
+        year, mo = map(int, target_month.split("-"))
+        end_dt = datetime(year, mo, 1, tzinfo=timezone.utc)
+    except Exception:
+        end_dt = now
+    series_keys: list = []
+    cur = end_dt
+    for _ in range(6):
+        series_keys.append(cur.strftime("%Y-%m"))
+        # step back one month
+        cy = cur.year - 1 if cur.month == 1 else cur.year
+        cm = 12 if cur.month == 1 else cur.month - 1
+        cur = datetime(cy, cm, 1, tzinfo=timezone.utc)
+    series_keys.reverse()
     monthly_series = [
-        {"month": m, "income": monthly[m]["income"], "expense": monthly[m]["expense"]}
-        for m in months_sorted
+        {
+            "month": k,
+            "income": monthly.get(k, {}).get("income", 0.0),
+            "expense": monthly.get(k, {}).get("expense", 0.0),
+        }
+        for k in series_keys
     ]
 
     category_breakdown = [
@@ -436,12 +464,14 @@ async def dashboard_summary(user: dict = Depends(get_current_user)):
         for k, v in sorted(by_category.items(), key=lambda x: -x[1])
     ]
 
-    recent = sorted(txs, key=lambda t: t.get("date", ""), reverse=True)[:5]
+    recent = sorted(month_txs, key=lambda t: t.get("date", ""), reverse=True)[:5]
 
     return {
         "balance": balance,
         "total_income": total_income,
         "total_expense": total_expense,
+        "month": target_month,
+        "month_balance": month_cumulative_balance,
         "month_income": month_income,
         "month_expense": month_expense,
         "month_savings": month_income - month_expense,
@@ -449,7 +479,109 @@ async def dashboard_summary(user: dict = Depends(get_current_user)):
         "category_breakdown": category_breakdown,
         "recent_transactions": recent,
         "transaction_count": len(txs),
+        "month_transaction_count": len(month_txs),
     }
+
+# ---------- CALENDAR ----------
+@api_router.get("/calendar")
+async def calendar_events(
+    month: str,  # YYYY-MM
+    user: dict = Depends(get_current_user),
+):
+    """Return per-day income/expense aggregates for the given month, including projected
+    upcoming recurring transactions if the month is in the future."""
+    await materialize_due(user["id"])
+    try:
+        year, mo = map(int, month.split("-"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="month must be YYYY-MM")
+
+    start = datetime(year, mo, 1, tzinfo=timezone.utc)
+    if mo == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end = datetime(year, mo + 1, 1, tzinfo=timezone.utc)
+
+    # Pull all transactions for the month
+    cursor = db.transactions.find(
+        {
+            "user_id": user["id"],
+            "date": {"$gte": start.isoformat(), "$lt": end.isoformat()},
+        },
+        {"_id": 0},
+    ).sort("date", 1)
+    actual = await cursor.to_list(length=2000)
+
+    # Project future recurring transactions inside this month (those that don't
+    # yet exist because materialize_due only catches past-due rules).
+    rules = await db.recurring_rules.find(
+        {"user_id": user["id"], "active": True}, {"_id": 0}
+    ).to_list(length=200)
+    now = datetime.now(timezone.utc)
+    projected: list = []
+    for rule in rules:
+        next_dt = _parse_date(rule["next_date"])
+        end_dt = _parse_date(rule["end_date"]) if rule.get("end_date") else None
+        safety = 0
+        while next_dt < end and safety < 200:
+            if end_dt and next_dt > end_dt:
+                break
+            # Skip past dates; materialize_due already handled them.
+            if next_dt >= start and next_dt > now:
+                projected.append({
+                    "id": f"proj-{rule['id']}-{next_dt.isoformat()}",
+                    "user_id": user["id"],
+                    "amount": float(rule["amount"]),
+                    "type": rule["type"],
+                    "category": rule["category"],
+                    "description": rule["description"],
+                    "date": next_dt.isoformat(),
+                    "created_at": next_dt.isoformat(),
+                    "recurring_rule_id": rule["id"],
+                    "projected": True,
+                })
+            next_dt = _advance(next_dt, rule["frequency"])
+            safety += 1
+
+    # Build per-day aggregates
+    by_day: dict = {}
+    for t in actual + projected:
+        try:
+            dt = datetime.fromisoformat(t["date"].replace("Z", "+00:00"))
+        except Exception:
+            continue
+        day_key = dt.strftime("%Y-%m-%d")
+        agg = by_day.setdefault(day_key, {
+            "date": day_key,
+            "income": 0.0,
+            "expense": 0.0,
+            "projected_income": 0.0,
+            "projected_expense": 0.0,
+            "events": [],
+        })
+        if t.get("projected"):
+            agg[f"projected_{t['type']}"] += t["amount"]
+        else:
+            agg[t["type"]] += t["amount"]
+        agg["events"].append({
+            "id": t["id"],
+            "amount": t["amount"],
+            "type": t["type"],
+            "category": t["category"],
+            "description": t.get("description", ""),
+            "projected": bool(t.get("projected")),
+            "recurring_rule_id": t.get("recurring_rule_id"),
+            "date": t["date"],
+        })
+
+    days = sorted(by_day.values(), key=lambda d: d["date"])
+    totals = {
+        "income": sum(d["income"] for d in days),
+        "expense": sum(d["expense"] for d in days),
+        "projected_income": sum(d["projected_income"] for d in days),
+        "projected_expense": sum(d["projected_expense"] for d in days),
+    }
+    return {"month": month, "days": days, "totals": totals}
 
 # ---------- BUDGETS ----------
 @api_router.post("/budgets", response_model=BudgetOut)

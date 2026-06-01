@@ -39,6 +39,8 @@ export type DashboardSummary = {
   balance: number;
   total_income: number;
   total_expense: number;
+  month: string;
+  month_balance: number;
   month_income: number;
   month_expense: number;
   month_savings: number;
@@ -46,6 +48,7 @@ export type DashboardSummary = {
   category_breakdown: { category: string; amount: number }[];
   recent_transactions: Transaction[];
   transaction_count: number;
+  month_transaction_count?: number;
 };
 
 export type Budget = {
