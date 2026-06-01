@@ -18,6 +18,8 @@ import { theme } from "../src/theme";
 import { api } from "../src/api";
 import { Category } from "../src/types";
 import DatePicker from "../src/components/DatePicker";
+import { useConfirm } from "../src/components/ConfirmDialog";
+import { refreshBus } from "../src/refresh-bus";
 
 const todayStr = () => {
   const d = new Date();
@@ -38,6 +40,7 @@ function toIsoWithNowTime(ymd: string): string {
 
 export default function AddTransaction() {
   const router = useRouter();
+  const confirm = useConfirm();
   const params = useLocalSearchParams<{
     id?: string;
     amount?: string;
@@ -158,7 +161,15 @@ export default function AddTransaction() {
           end_date: endDate ? toIsoWithNowTime(endDate) : null,
         });
       }
-      router.back();
+      // Tell the Activity tab to refresh + reset filters so the new transaction is visible.
+      refreshBus.flags.transactionsNeedReset = true;
+      // Dismiss the modal and return to wherever the user came from (Dashboard or Activity).
+      // useFocusEffect on the receiving screen will run and pick up the new transaction.
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace("/(tabs)/transactions");
+      }
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.detail || "Could not save transaction.");
     } finally {
@@ -166,23 +177,23 @@ export default function AddTransaction() {
     }
   };
 
-  const onDelete = () => {
+  const onDelete = async () => {
     if (!isEdit) return;
-    Alert.alert("Delete transaction?", "This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await api.delete(`/transactions/${params.id}`);
-            router.back();
-          } catch (e: any) {
-            Alert.alert("Error", e?.response?.data?.detail || "Could not delete.");
-          }
-        },
-      },
-    ]);
+    const ok = await confirm({
+      title: "Delete transaction?",
+      message: "This cannot be undone.",
+      destructive: true,
+      confirmText: "Delete",
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/transactions/${params.id}`);
+      refreshBus.flags.transactionsNeedReset = true;
+      if (router.canGoBack()) router.back();
+      else router.replace("/(tabs)/transactions");
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.detail || "Could not delete.");
+    }
   };
 
   return (

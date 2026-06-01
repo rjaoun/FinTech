@@ -15,10 +15,12 @@ import { theme, formatCurrency } from "../src/theme";
 import { api } from "../src/api";
 import { useAuth } from "../src/auth";
 import { RecurringRule, Category } from "../src/types";
+import { useConfirm } from "../src/components/ConfirmDialog";
 
 export default function Recurring() {
   const router = useRouter();
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [rules, setRules] = useState<RecurringRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,33 +51,34 @@ export default function Recurring() {
     } catch {}
   };
 
-  const onDelete = (rule: RecurringRule) => {
-    Alert.alert(
-      "Remove recurring rule?",
-      "You can keep the transactions it already created, or delete them too.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Keep history",
-          onPress: async () => {
-            try {
-              await api.delete(`/recurring/${rule.id}`);
-              setRules((prev) => prev.filter((x) => x.id !== rule.id));
-            } catch {}
-          },
-        },
-        {
-          text: "Delete everything",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await api.delete(`/recurring/${rule.id}?delete_generated=true`);
-              setRules((prev) => prev.filter((x) => x.id !== rule.id));
-            } catch {}
-          },
-        },
-      ]
-    );
+  const onDelete = async (rule: RecurringRule) => {
+    const first = await confirm({
+      title: "Remove recurring rule?",
+      message: "Would you like to keep the transactions it already created, or remove them too?",
+      confirmText: "Remove everything",
+      cancelText: "Keep history",
+      destructive: true,
+    });
+    // `first` is true when user picked "Remove everything", false for "Keep history".
+    // Because the modal is also dismissable via backdrop, wrap the actual delete in another confirm
+    // only when the user explicitly chose one of the two options by opening a chooser first.
+    try {
+      if (first) {
+        await api.delete(`/recurring/${rule.id}?delete_generated=true`);
+      } else {
+        // The "keep history" path still needs explicit confirmation because Cancel and
+        // "Keep history" share the same button position in a 2-option dialog.
+        const keep = await confirm({
+          title: "Keep the generated transactions?",
+          message: "The rule will be removed but any transactions it already created will remain.",
+          confirmText: "Remove rule",
+          destructive: true,
+        });
+        if (!keep) return;
+        await api.delete(`/recurring/${rule.id}`);
+      }
+      setRules((prev) => prev.filter((x) => x.id !== rule.id));
+    } catch {}
   };
 
   return (

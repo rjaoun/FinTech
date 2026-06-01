@@ -19,6 +19,7 @@ import { theme, formatCurrency } from "../src/theme";
 import { api } from "../src/api";
 import { Budget, Category } from "../src/types";
 import { useAuth } from "../src/auth";
+import { useConfirm } from "../src/components/ConfirmDialog";
 
 function currentMonth(): string {
   const d = new Date();
@@ -28,6 +29,7 @@ function currentMonth(): string {
 export default function Budgets() {
   const router = useRouter();
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [month] = useState(currentMonth());
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -89,18 +91,15 @@ export default function Budgets() {
     }
   };
 
-  const onDelete = (id: string) => {
-    Alert.alert("Delete budget?", "", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          await api.delete(`/budgets/${id}`);
-          setBudgets((prev) => prev.filter((b) => b.id !== id));
-        },
-      },
-    ]);
+  const onDelete = async (id: string) => {
+    const ok = await confirm({
+      title: "Delete budget?",
+      destructive: true,
+      confirmText: "Delete",
+    });
+    if (!ok) return;
+    await api.delete(`/budgets/${id}`);
+    setBudgets((prev) => prev.filter((b) => b.id !== id));
   };
 
   return (

@@ -19,9 +19,11 @@ import { theme, formatCurrency } from "../../src/theme";
 import { api } from "../../src/api";
 import { useAuth } from "../../src/auth";
 import { Goal } from "../../src/types";
+import { useConfirm } from "../../src/components/ConfirmDialog";
 
 export default function Goals() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [items, setItems] = useState<Goal[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -86,20 +88,18 @@ export default function Goals() {
     } catch {}
   };
 
-  const onDelete = (gid: string) => {
-    Alert.alert("Delete goal?", "You'll lose progress tracking for this goal.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await api.delete(`/goals/${gid}`);
-            setItems((prev) => prev.filter((g) => g.id !== gid));
-          } catch {}
-        },
-      },
-    ]);
+  const onDelete = async (gid: string) => {
+    const ok = await confirm({
+      title: "Delete goal?",
+      message: "You'll lose progress tracking for this goal.",
+      destructive: true,
+      confirmText: "Delete",
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/goals/${gid}`);
+      setItems((prev) => prev.filter((g) => g.id !== gid));
+    } catch {}
   };
 
   return (

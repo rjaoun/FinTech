@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from "../src/auth";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 import { theme } from "../src/theme";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { ConfirmProvider } from "../src/components/ConfirmDialog";
 
 function RootGate() {
   const { user, loading } = useAuth();
@@ -44,8 +45,10 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <StatusBar style="dark" />
-        <RootGate />
+        <ConfirmProvider>
+          <StatusBar style="dark" />
+          <RootGate />
+        </ConfirmProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

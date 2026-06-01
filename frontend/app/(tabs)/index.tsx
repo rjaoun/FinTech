@@ -316,9 +316,9 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     marginBottom: theme.spacing.md,
   },
-  sectionTitle: { fontSize: 18, fontWeight: "700", color: theme.colors.text, letterSpacing: -0.3 },
-  sectionHint: { fontSize: 12, color: theme.colors.textMuted },
-  link: { color: theme.colors.primary, fontWeight: "700", fontSize: 13 },
+  sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.colors.text, letterSpacing: -0.2 },
+  sectionHint: { fontSize: 11, color: theme.colors.textMuted },
+  link: { color: theme.colors.primary, fontWeight: "700", fontSize: 12 },
   trendRow: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -338,13 +338,14 @@ const styles = StyleSheet.create({
   txRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    paddingVertical: 12,
+    gap: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
-  txIcon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
-  txTitle: { fontSize: 15, fontWeight: "600", color: theme.colors.text },
-  txMeta: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2 },
-  txAmount: { fontSize: 15, fontWeight: "700" },
+  txIcon: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  txTitle: { fontSize: 13, fontWeight: "600", color: theme.colors.text },
+  txMeta: { fontSize: 11, color: theme.colors.textMuted, marginTop: 1 },
+  txAmount: { fontSize: 13, fontWeight: "700" },
 });
+

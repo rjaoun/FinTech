@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   TextInput,
-  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -16,10 +15,13 @@ import { theme, formatCurrency } from "../../src/theme";
 import { api } from "../../src/api";
 import { useAuth } from "../../src/auth";
 import { Transaction, Category } from "../../src/types";
+import { useConfirm } from "../../src/components/ConfirmDialog";
+import { refreshBus } from "../../src/refresh-bus";
 
 export default function Transactions() {
   const { user } = useAuth();
   const router = useRouter();
+  const confirm = useConfirm();
   const [items, setItems] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +40,13 @@ export default function Transactions() {
 
   useFocusEffect(
     useCallback(() => {
+      // If a transaction was just created/edited/deleted elsewhere, refresh and reset filters
+      // so the new item is always visible.
+      if (refreshBus.flags.transactionsNeedReset) {
+        refreshBus.flags.transactionsNeedReset = false;
+        setFilter("all");
+        setQuery("");
+      }
       load();
     }, [load])
   );
@@ -58,20 +67,18 @@ export default function Transactions() {
     return list;
   }, [items, filter, query, catMap]);
 
-  const onDelete = (id: string) => {
-    Alert.alert("Delete transaction?", "This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await api.delete(`/transactions/${id}`);
-            setItems((prev) => prev.filter((x) => x.id !== id));
-          } catch {}
-        },
-      },
-    ]);
+  const onDelete = async (id: string) => {
+    const ok = await confirm({
+      title: "Delete transaction?",
+      message: "This cannot be undone.",
+      destructive: true,
+      confirmText: "Delete",
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/transactions/${id}`);
+      setItems((prev) => prev.filter((x) => x.id !== id));
+    } catch {}
   };
 
   const currency = user?.currency || "USD";
