@@ -238,6 +238,65 @@ async def logout(user: dict = Depends(get_current_user)):
     # Stateless JWT — client just discards. Endpoint exists for symmetry.
     return {"ok": True}
 
+# ---------- USER PROFILE ----------
+class UserUpdateBody(BaseModel):
+    currency: Optional[str] = None
+    name: Optional[str] = None
+
+ALLOWED_CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "INR", "MXN", "BRL", "CHF"]
+
+@api_router.patch("/users/me", response_model=UserOut)
+async def update_me(body: UserUpdateBody, user: dict = Depends(get_current_user)):
+    update: dict = {}
+    if body.currency is not None:
+        if body.currency not in ALLOWED_CURRENCIES:
+            raise HTTPException(status_code=400, detail=f"Currency must be one of {ALLOWED_CURRENCIES}")
+        update["currency"] = body.currency
+    if body.name is not None:
+        n = body.name.strip()
+        if not n:
+            raise HTTPException(status_code=400, detail="name cannot be empty")
+        update["name"] = n
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return {
+        "id": fresh["id"],
+        "email": fresh["email"],
+        "name": fresh["name"],
+        "currency": fresh.get("currency", "USD"),
+        "role": fresh.get("role", "user"),
+        "created_at": fresh["created_at"],
+    }
+
+@api_router.post("/users/me/reset")
+async def reset_data(user: dict = Depends(get_current_user)):
+    """Permanently wipe all financial data for the current user (transactions, recurring rules, goals, budgets)."""
+    tx_res = await db.transactions.delete_many({"user_id": user["id"]})
+    rec_res = await db.recurring_rules.delete_many({"user_id": user["id"]})
+    goal_res = await db.goals.delete_many({"user_id": user["id"]})
+    budget_res = await db.budgets.delete_many({"user_id": user["id"]})
+    return {
+        "ok": True,
+        "deleted": {
+            "transactions": tx_res.deleted_count,
+            "recurring_rules": rec_res.deleted_count,
+            "goals": goal_res.deleted_count,
+            "budgets": budget_res.deleted_count,
+        },
+    }
+
+@api_router.get("/users/currencies")
+async def list_currencies(user: dict = Depends(get_current_user)):
+    return [{"code": c, "symbol": _currency_symbol(c)} for c in ALLOWED_CURRENCIES]
+
+def _currency_symbol(code: str) -> str:
+    return {
+        "USD": "$", "EUR": "€", "GBP": "£", "CAD": "$", "AUD": "$",
+        "JPY": "¥", "INR": "₹", "MXN": "$", "BRL": "R$", "CHF": "Fr",
+    }.get(code, code)
+
 # ---------- CATEGORIES ----------
 @api_router.get("/categories")
 async def list_categories(user: dict = Depends(get_current_user)):
@@ -408,6 +467,7 @@ async def dashboard_summary(
 
     now = datetime.now(timezone.utc)
     target_month = month if month else now.strftime("%Y-%m")
+    current_month_str = now.strftime("%Y-%m")
     month_income = 0.0
     month_expense = 0.0
     by_category: dict = {}
@@ -435,17 +495,64 @@ async def dashboard_summary(
                 month_expense += t["amount"]
                 by_category[t["category"]] = by_category.get(t["category"], 0.0) + t["amount"]
 
+    # Project upcoming recurring transactions for current or future target months.
+    projected_income = 0.0
+    projected_expense = 0.0
+    projected_events: list = []
+    if target_month >= current_month_str:
+        try:
+            ty, tm = map(int, target_month.split("-"))
+            t_start = datetime(ty, tm, 1, tzinfo=timezone.utc)
+            t_end = datetime(ty + 1, 1, 1, tzinfo=timezone.utc) if tm == 12 else datetime(ty, tm + 1, 1, tzinfo=timezone.utc)
+        except Exception:
+            t_start = now
+            t_end = now
+        rules = await db.recurring_rules.find(
+            {"user_id": user["id"], "active": True}, {"_id": 0}
+        ).to_list(length=200)
+        for rule in rules:
+            next_dt = _parse_date(rule["next_date"])
+            end_dt = _parse_date(rule["end_date"]) if rule.get("end_date") else None
+            safety = 0
+            while next_dt < t_end and safety < 200:
+                if end_dt and next_dt > end_dt:
+                    break
+                if next_dt >= t_start and next_dt > now:
+                    if rule["type"] == "income":
+                        projected_income += float(rule["amount"])
+                    else:
+                        projected_expense += float(rule["amount"])
+                        by_category[rule["category"]] = by_category.get(rule["category"], 0.0) + float(rule["amount"])
+                    projected_events.append({
+                        "id": f"proj-{rule['id']}-{next_dt.isoformat()}",
+                        "user_id": user["id"],
+                        "amount": float(rule["amount"]),
+                        "type": rule["type"],
+                        "category": rule["category"],
+                        "description": rule["description"],
+                        "date": next_dt.isoformat(),
+                        "created_at": next_dt.isoformat(),
+                        "recurring_rule_id": rule["id"],
+                        "projected": True,
+                    })
+                next_dt = _advance(next_dt, rule["frequency"])
+                safety += 1
+        # Include projections in monthly_series for the target month so the chart reflects them.
+        if projected_income or projected_expense:
+            monthly.setdefault(target_month, {"income": 0.0, "expense": 0.0})
+            monthly[target_month]["income"] += projected_income
+            monthly[target_month]["expense"] += projected_expense
+
     # 6-month series ending at target_month
     try:
         year, mo = map(int, target_month.split("-"))
-        end_dt = datetime(year, mo, 1, tzinfo=timezone.utc)
+        end_dt_series = datetime(year, mo, 1, tzinfo=timezone.utc)
     except Exception:
-        end_dt = now
+        end_dt_series = now
     series_keys: list = []
-    cur = end_dt
+    cur = end_dt_series
     for _ in range(6):
         series_keys.append(cur.strftime("%Y-%m"))
-        # step back one month
         cy = cur.year - 1 if cur.month == 1 else cur.year
         cm = 12 if cur.month == 1 else cur.month - 1
         cur = datetime(cy, cm, 1, tzinfo=timezone.utc)
@@ -464,22 +571,25 @@ async def dashboard_summary(
         for k, v in sorted(by_category.items(), key=lambda x: -x[1])
     ]
 
-    recent = sorted(month_txs, key=lambda t: t.get("date", ""), reverse=True)[:5]
+    # Combine real + projected for "recent activity" sorted by date desc; projected go to the top by future dates.
+    combined_recent = sorted(month_txs + projected_events, key=lambda t: t.get("date", ""), reverse=True)[:5]
 
     return {
         "balance": balance,
         "total_income": total_income,
         "total_expense": total_expense,
         "month": target_month,
-        "month_balance": month_cumulative_balance,
+        "month_balance": month_cumulative_balance + projected_income - projected_expense,
         "month_income": month_income,
         "month_expense": month_expense,
+        "month_projected_income": projected_income,
+        "month_projected_expense": projected_expense,
         "month_savings": month_income - month_expense,
         "monthly_series": monthly_series,
         "category_breakdown": category_breakdown,
-        "recent_transactions": recent,
+        "recent_transactions": combined_recent,
         "transaction_count": len(txs),
-        "month_transaction_count": len(month_txs),
+        "month_transaction_count": len(month_txs) + len(projected_events),
     }
 
 # ---------- CALENDAR ----------

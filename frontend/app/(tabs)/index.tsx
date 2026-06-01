@@ -150,7 +150,14 @@ export default function Dashboard() {
               </View>
               <View>
                 <Text style={styles.cellLabel}>Income</Text>
-                <Text style={styles.cellValue}>{formatCurrency(summary?.month_income ?? 0, currency)}</Text>
+                <Text style={styles.cellValue}>
+                  {formatCurrency((summary?.month_income ?? 0) + (summary?.month_projected_income ?? 0), currency)}
+                </Text>
+                {(summary?.month_projected_income ?? 0) > 0 ? (
+                  <Text style={styles.projHint}>
+                    incl. {formatCurrency(summary!.month_projected_income, currency)} upcoming
+                  </Text>
+                ) : null}
               </View>
             </View>
             <View style={styles.verticalDivider} />
@@ -160,7 +167,14 @@ export default function Dashboard() {
               </View>
               <View>
                 <Text style={styles.cellLabel}>Expense</Text>
-                <Text style={styles.cellValue}>{formatCurrency(summary?.month_expense ?? 0, currency)}</Text>
+                <Text style={styles.cellValue}>
+                  {formatCurrency((summary?.month_expense ?? 0) + (summary?.month_projected_expense ?? 0), currency)}
+                </Text>
+                {(summary?.month_projected_expense ?? 0) > 0 ? (
+                  <Text style={styles.projHint}>
+                    incl. {formatCurrency(summary!.month_projected_expense, currency)} upcoming
+                  </Text>
+                ) : null}
               </View>
             </View>
           </View>
@@ -353,6 +367,7 @@ const styles = StyleSheet.create({
   },
   cellLabel: { color: "#DCE6E1", fontSize: 11, fontWeight: "600", letterSpacing: 1.5 },
   cellValue: { color: theme.colors.textInverse, fontSize: 15, fontWeight: "700" },
+  projHint: { color: "#DCE6E1", fontSize: 10, marginTop: 1, fontStyle: "italic", opacity: 0.85 },
   verticalDivider: { width: 1, height: 32, backgroundColor: "#ffffff20", marginHorizontal: 8 },
   quickRow: { flexDirection: "row", gap: 12, marginTop: theme.spacing.lg },
   quickBtn: {

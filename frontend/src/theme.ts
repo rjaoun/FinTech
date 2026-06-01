@@ -54,9 +54,15 @@ export const theme = {
   },
 };
 
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: "$", EUR: "€", GBP: "£", CAD: "$", AUD: "$",
+  JPY: "¥", INR: "₹", MXN: "$", BRL: "R$", CHF: "Fr",
+};
+
 export const formatCurrency = (n: number, currency = "USD") => {
   const sign = n < 0 ? "-" : "";
   const abs = Math.abs(n);
-  const symbol = currency === "USD" ? "$" : currency === "EUR" ? "€" : currency === "GBP" ? "£" : "$";
-  return `${sign}${symbol}${abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const symbol = CURRENCY_SYMBOLS[currency] || "$";
+  const decimals = currency === "JPY" ? 0 : 2;
+  return `${sign}${symbol}${abs.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
 };

@@ -43,10 +43,12 @@ export type DashboardSummary = {
   month_balance: number;
   month_income: number;
   month_expense: number;
+  month_projected_income: number;
+  month_projected_expense: number;
   month_savings: number;
   monthly_series: { month: string; income: number; expense: number }[];
   category_breakdown: { category: string; amount: number }[];
-  recent_transactions: Transaction[];
+  recent_transactions: (Transaction & { projected?: boolean })[];
   transaction_count: number;
   month_transaction_count?: number;
 };

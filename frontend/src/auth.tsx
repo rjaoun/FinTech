@@ -17,6 +17,7 @@ type AuthContextValue = {
   register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  setUser: (u: User | null) => void;
 };
 
 const AuthCtx = createContext<AuthContextValue | null>(null);
@@ -76,7 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthCtx.Provider value={{ user, loading, login, register, logout, refresh }}>
+    <AuthCtx.Provider value={{ user, loading, login, register, logout, refresh, setUser }}>
       {children}
     </AuthCtx.Provider>
   );

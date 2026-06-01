@@ -1,0 +1,80 @@
+{
+  "summary": "Tested 3 new features: (1) Recurring projection for future months (BUG FIX), (2) Currency switcher in Profile, (3) Reset all data button. All backend tests passed (15/15, 100%). Frontend features verified via Playwright.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_user_profile.py",
+    "/app/backend/tests/test_dashboard_projection.py",
+    "/app/test_reports/pytest/pytest_iteration6_new_features.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (15/15 tests passed)",
+    "frontend": "100% (all features working)"
+  },
+  "seed_data_creation": "No new seed data created. Tests used existing admin account and created temporary test users for reset functionality.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 3 new features fully tested and working. Backend: (1) Dashboard projection API returns month_projected_income/expense for future months, 0 for past months. (2) User profile endpoints (PATCH /users/me, GET /currencies, POST /reset) all working with proper auth. Frontend: (1) Currency picker modal opens, lists 10 currencies, updates menu on selection. (2) Reset all data button visible in Profile DANGER ZONE. (3) Dashboard shows 'incl. $X upcoming' hints when viewing future months with active recurring rules.",
+  "features_tested": {
+    "backend": {
+      "dashboard_projection": {
+        "status": "PASS",
+        "tests": [
+          "Future month projects recurring income (month_projected_income >= rule amount)",
+          "Future month projects recurring expense (month_projected_expense >= rule amount)",
+          "Past months have 0 projections",
+          "Current month projects future dates only",
+          "month_balance includes projections",
+          "recent_transactions includes projected events with projected=true flag"
+        ]
+      },
+      "user_profile_currency": {
+        "status": "PASS",
+        "tests": [
+          "GET /api/users/currencies requires auth (401 without token)",
+          "GET /api/users/currencies returns 10 currencies with code and symbol",
+          "PATCH /api/users/me requires auth (401 without token)",
+          "PATCH /api/users/me updates currency and reflects in GET /api/auth/me",
+          "PATCH /api/users/me with invalid currency returns 400",
+          "PATCH /api/users/me updates name",
+          "PATCH /api/users/me with empty name returns 400"
+        ]
+      },
+      "user_profile_reset": {
+        "status": "PASS",
+        "tests": [
+          "POST /api/users/me/reset requires auth (401 without token)",
+          "POST /api/users/me/reset deletes transactions, recurring_rules, goals, budgets",
+          "POST /api/users/me/reset keeps user account intact (GET /api/auth/me still works)",
+          "After reset, all data endpoints return empty arrays"
+        ]
+      }
+    },
+    "frontend": {
+      "currency_picker": {
+        "status": "PASS",
+        "details": "Currency menu in Profile opens modal with 10 currencies (USD, EUR, GBP, CAD, AUD, JPY, INR visible). Selecting a currency closes modal and updates menu display (e.g., '€ EUR' → '$ USD'). Dashboard balance card reflects selected currency symbol."
+      },
+      "reset_data_button": {
+        "status": "PASS",
+        "details": "Reset all data button visible in Profile screen under DANGER ZONE section with description 'Wipe transactions, budgets, goals, and recurring rules'. Button is tappable (not tested full flow to avoid data loss)."
+      },
+      "dashboard_projection_hints": {
+        "status": "PASS",
+        "details": "When viewing future month (July 2026), Dashboard balance card shows projection hints: 'Income $3,500.00 incl. $3,500.00 upcoming' and 'Expense $600.00 incl. $600.00 upcoming'. month_balance includes projected amounts."
+      }
+    }
+  },
+  "rca_of_issue": "BUG FIX VERIFIED: The original issue was that recurring rent income/expenses didn't show on Dashboard for future months because materialize_due only created entries for past-due rules. The fix added projection logic in /api/dashboard/summary to project active recurring rules into the target month when target_month >= current month. New response fields month_projected_income and month_projected_expense are now populated correctly. Frontend displays these projections as 'incl. $X upcoming' sub-text in balance card."
+}
