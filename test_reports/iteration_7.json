@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend-only regression + bug-fix verification for Dashboard 'Upcoming' projected recurring events. Executed 11 scenarios via Playwright on public preview URL (mobile viewport 390x844) after logging in as admin. All 11 pass. The Dashboard now merges real (materialized) transactions with projected recurring events from GET /api/calendar?month=YYYY-MM. Bug 'I added a transaction but I don't see it' is fixed: for start_date=today the recurring becomes a real row immediately; for future months the Activity list shows dashed 'Upcoming' rows with clock icon, UPCOMING pill, 'auto on MM-DD' hint, and no edit/delete icons. Count pill correctly renamed from 'unpaid' to 'upcoming'. Paid checkbox on projected rows is disabled (no PATCH fired). Filter chips (All / Paid / Unpaid) behave per spec. Search filters across real + projected. All CRUD regressions (edit preserves paid, delete confirm dialog + delete, paid toggle PATCH on real rows) still work. No console errors during flows. No React Native / Expo deprecated-package issues found in the file under review.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard", "issues": ["Non-blocking: console warnings 'shadow* style props are deprecated. Use \"boxShadow\"' and 'props.pointerEvents is deprecated. Use style.pointerEvents' still present (pre-existing across the app, not introduced by this change)."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_7.json"
+  ],
+  "action_items": [
+    "None required for this iteration — bug fix verified and all regressions pass. Optional: address pre-existing RN Web deprecation warnings for 'shadow*' style props and 'props.pointerEvents' by migrating to style.boxShadow / style.pointerEvents where used."
+  ],
+  "critical_code_review_comments": [
+    "index.tsx load() fires api.get('/calendar') on every focus even when unauthenticated (during logout transitions). This is unchanged from prior code but the additional call increases the surface for the 'Uncaught Error: 401' Metro error screen. Consider guarding with `if (!user) return;` at the top of load() or wrapping in try/catch that suppresses 401.",
+    "Projected event id format is `proj-<rule_id>-<iso>` which uses ':' characters. Since it flows into a React key and testID it is fine, but selectors like data-testid must escape ':' with backslashes in CSS. Playwright happens to accept it via attribute-equals matching, so no bug in practice.",
+    "unpaidCount recomputes with a second pass over allTx + projected; could reuse the memoized monthTx list. Minor perf, not functional."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend-only request)", "frontend": "100% (11/11 scenarios pass)"},
+  "seed_data_creation": "Created and cleaned up: (a) TEST_onetime_today one-time transaction (deleted via UI delete flow during test), (b) TEST_recurring_future monthly recurring rule (deleted via API POST-test cleanup - rule id 67b54c97-...). Pre-existing seed rules TEST_projection_income / TEST_balance_projection_income / TEST_balance_projection_expense were used read-only.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login testIDs are `login-email-input`, `login-password-input`, `login-submit-button`. Dashboard testIDs used: balance-card, month-label, month-prev, month-next, add-transaction-cta, filter-{all|paid|unpaid}, search-input, tx-<id>, tx-paid-toggle-<id>, tx-edit-<id>, tx-delete-<id>, tx-upcoming-<projId>. Backend clock is Aug 4, 2026 UTC. Admin has 3 recurring rules with next_date at start of Sep 2026, so month-next from Aug 2026 shows exactly 3 Upcoming rows. To test 'future-in-current-month upcoming' via UI, the add-transaction DatePicker is a custom component (not <input type=date>) — automation should click the DatePicker testID and interact with its calendar UI rather than input.fill. Backend API GET /api/calendar?month=YYYY-MM returns days[].events[] each with `projected` boolean; frontend flattens all `projected:true` events into a monthTx merge.",
+  "rca_of_issue": "Original complaint: 'I added a transaction but I don't see it.' RCA (confirmed): user added a RECURRING (monthly) transaction whose start_date fell later this month; backend created the recurring rule but did NOT materialize a transaction yet, so the Dashboard's Activity list (which only queried GET /transactions) had nothing to show even though the balance card reflected `projected_income/expense`. Fix now merges GET /api/calendar projected events into monthTx so the row appears as an 'Upcoming' entry (dashed border, clock icon, UPCOMING pill, 'auto on MM-DD'). Verified: (1) navigating to Sep 2026 shows 3 projected upcoming rows and count pill '3 upcoming'; (2) projected rows have no edit/delete and their paid checkbox does not hit backend; (3) filter chips correctly include/exclude projected; (4) search matches by description/category across real + projected; (5) one-time flow regression still shows real row immediately; (6) pencil edit preserves paid state; (7) delete uses ConfirmDialog and removes the row."
+}

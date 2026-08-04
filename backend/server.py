@@ -118,12 +118,17 @@ class TransactionIn(BaseModel):
     category: str
     description: str = ""
     date: Optional[str] = None  # ISO string
+    paid: bool = True
 
 class TransactionOut(TransactionIn):
     id: str
     user_id: str
     created_at: str
     recurring_rule_id: Optional[str] = None
+    paid: bool = True
+
+class PaidStatusBody(BaseModel):
+    paid: bool
 
 RECURRING_FREQUENCIES = ("daily", "weekly", "biweekly", "monthly", "quarterly", "yearly")
 
@@ -406,6 +411,7 @@ async def create_transaction(body: TransactionIn, user: dict = Depends(get_curre
         "date": body.date or now,
         "created_at": now,
         "recurring_rule_id": None,
+        "paid": bool(body.paid),
     }
     await db.transactions.insert_one(doc)
     doc.pop("_id", None)
@@ -442,10 +448,23 @@ async def update_transaction(tid: str, body: TransactionIn, user: dict = Depends
         "category": body.category,
         "description": body.description or "",
         "date": body.date or datetime.now(timezone.utc).isoformat(),
+        "paid": bool(body.paid),
     }
     res = await db.transactions.find_one_and_update(
         {"id": tid, "user_id": user["id"]},
         {"$set": update},
+        return_document=True,
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    res.pop("_id", None)
+    return res
+
+@api_router.patch("/transactions/{tid}/paid", response_model=TransactionOut)
+async def set_paid_status(tid: str, body: PaidStatusBody, user: dict = Depends(get_current_user)):
+    res = await db.transactions.find_one_and_update(
+        {"id": tid, "user_id": user["id"]},
+        {"$set": {"paid": bool(body.paid)}},
         return_document=True,
     )
     if not res:
@@ -1022,6 +1041,8 @@ logger = logging.getLogger(__name__)
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.transactions.create_index([("user_id", 1), ("date", -1)])
+    # Default any pre-existing transactions to paid=true (idempotent backfill)
+    await db.transactions.update_many({"paid": {"$exists": False}}, {"$set": {"paid": True}})
     await db.budgets.create_index([("user_id", 1), ("month", 1), ("category", 1)])
     await db.goals.create_index([("user_id", 1), ("created_at", -1)])
     await db.recurring_rules.create_index([("user_id", 1), ("active", 1)])

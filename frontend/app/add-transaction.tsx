@@ -48,6 +48,7 @@ export default function AddTransaction() {
     category?: string;
     type?: string;
     date?: string;
+    paid?: string;
   }>();
   const isEdit = !!params.id;
 
@@ -134,12 +135,14 @@ export default function AddTransaction() {
     setSaving(true);
     try {
       const isoDate = toIsoWithNowTime(date);
+      const paidFlag = params.paid === "0" ? false : true;
       const payload = {
         amount: amt,
         type,
         category,
         description: description.trim(),
         date: isoDate,
+        paid: paidFlag,
       };
       if (isEdit) {
         await api.put(`/transactions/${params.id}`, payload);
@@ -168,7 +171,7 @@ export default function AddTransaction() {
       if (router.canGoBack()) {
         router.back();
       } else {
-        router.replace("/(tabs)/transactions");
+        router.replace("/(tabs)");
       }
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.detail || "Could not save transaction.");
@@ -190,7 +193,7 @@ export default function AddTransaction() {
       await api.delete(`/transactions/${params.id}`);
       refreshBus.flags.transactionsNeedReset = true;
       if (router.canGoBack()) router.back();
-      else router.replace("/(tabs)/transactions");
+      else router.replace("/(tabs)");
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.detail || "Could not delete.");
     }

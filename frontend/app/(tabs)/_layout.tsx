@@ -32,15 +32,6 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="transactions"
-        options={{
-          title: "Activity",
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon name={focused ? "swap-horizontal" : "swap-horizontal-outline"} color={color} testID="tab-transactions" />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="insights"
         options={{
           title: "Insights",

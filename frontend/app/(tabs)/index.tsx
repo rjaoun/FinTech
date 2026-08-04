@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   RefreshControl,
   TouchableOpacity,
   ActivityIndicator,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -14,7 +15,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { theme, formatCurrency } from "../../src/theme";
 import { api } from "../../src/api";
 import { useAuth } from "../../src/auth";
-import { DashboardSummary, Category } from "../../src/types";
+import { DashboardSummary, Category, Transaction } from "../../src/types";
+import { useConfirm } from "../../src/components/ConfirmDialog";
+import { refreshBus } from "../../src/refresh-bus";
 
 const MONTH_NAMES_FULL = [
   "January", "February", "March", "April", "May", "June",
@@ -33,34 +36,73 @@ function humanMonth(s: string): string {
   const [y, m] = s.split("-").map(Number);
   return `${MONTH_NAMES_FULL[m - 1]} ${y}`;
 }
+function txMonth(t: Transaction): string {
+  return (t.date || "").slice(0, 7);
+}
+
+type PaidFilter = "all" | "paid" | "unpaid";
+type ProjectedEvent = Transaction & { projected: true };
 
 export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
+  const confirm = useConfirm();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [allTx, setAllTx] = useState<Transaction[]>([]);
+  const [projected, setProjected] = useState<ProjectedEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [month, setMonth] = useState<string>(() => ymd(new Date()));
+  const [paidFilter, setPaidFilter] = useState<PaidFilter>("all");
+  const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [s, c] = await Promise.all([
+      const [s, c, t, cal] = await Promise.all([
         api.get(`/dashboard/summary?month=${month}`),
         api.get("/categories"),
+        api.get("/transactions"),
+        api.get(`/calendar?month=${month}`),
       ]);
       setSummary(s.data);
       setCategories(c.data);
-    } catch (e) {
-      // ignore
+      setAllTx(t.data);
+      // Extract projected events (upcoming recurring instances) for this month
+      const projList: ProjectedEvent[] = [];
+      for (const day of cal.data?.days || []) {
+        for (const ev of day.events || []) {
+          if (ev.projected) {
+            projList.push({
+              id: ev.id,
+              user_id: user?.id || "",
+              amount: ev.amount,
+              type: ev.type,
+              category: ev.category,
+              description: ev.description || "",
+              date: ev.date,
+              created_at: ev.date,
+              recurring_rule_id: ev.recurring_rule_id,
+              paid: true,
+              projected: true,
+            });
+          }
+        }
+      }
+      setProjected(projList);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [month]);
+  }, [month, user?.id]);
 
   useFocusEffect(
     useCallback(() => {
+      if (refreshBus.flags.transactionsNeedReset) {
+        refreshBus.flags.transactionsNeedReset = false;
+        setPaidFilter("all");
+        setQuery("");
+      }
       load();
     }, [load])
   );
@@ -73,6 +115,77 @@ export default function Dashboard() {
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
   const currency = user?.currency || "USD";
 
+  // Filter transactions for the selected month + search + paid status.
+  // Include projected (upcoming recurring) events so users see what's coming.
+  const monthTx = useMemo(() => {
+    const target = month;
+    const real = allTx.filter((t) => txMonth(t) === target);
+    const proj = projected.filter((t) => txMonth(t) === target);
+    let list: (Transaction & { projected?: boolean })[] = [...real, ...proj];
+    if (paidFilter === "paid") list = list.filter((t) => !t.projected && t.paid !== false);
+    if (paidFilter === "unpaid") list = list.filter((t) => t.projected || t.paid === false);
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(
+        (t) =>
+          (t.description || "").toLowerCase().includes(q) ||
+          (catMap[t.category]?.name || "").toLowerCase().includes(q)
+      );
+    }
+    // Sort by date desc so newest / soonest events surface first
+    list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    return list;
+  }, [allTx, projected, month, paidFilter, query, catMap]);
+
+  const paidCount = monthTx.filter((t) => !t.projected && t.paid !== false).length;
+  const unpaidCount =
+    allTx.filter((t) => txMonth(t) === month && t.paid === false).length +
+    projected.filter((t) => txMonth(t) === month).length;
+
+  const togglePaid = async (t: Transaction) => {
+    const newPaid = !(t.paid !== false);
+    // Optimistic update
+    setAllTx((prev) => prev.map((x) => (x.id === t.id ? { ...x, paid: newPaid } : x)));
+    try {
+      await api.patch(`/transactions/${t.id}/paid`, { paid: newPaid });
+      // Refresh summary in the background (income/expense may not change but keep in sync)
+      api.get(`/dashboard/summary?month=${month}`).then((r) => setSummary(r.data)).catch(() => {});
+    } catch {
+      // Revert on failure
+      setAllTx((prev) => prev.map((x) => (x.id === t.id ? { ...x, paid: !newPaid } : x)));
+    }
+  };
+
+  const onDelete = async (id: string) => {
+    const ok = await confirm({
+      title: "Delete transaction?",
+      message: "This cannot be undone.",
+      destructive: true,
+      confirmText: "Delete",
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/transactions/${id}`);
+      setAllTx((prev) => prev.filter((x) => x.id !== id));
+      load();
+    } catch {}
+  };
+
+  const goEdit = (t: Transaction) => {
+    router.push({
+      pathname: "/add-transaction",
+      params: {
+        id: t.id,
+        amount: String(t.amount),
+        description: t.description || "",
+        category: t.category,
+        type: t.type,
+        date: t.date,
+        paid: t.paid === false ? "0" : "1",
+      },
+    });
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -82,11 +195,6 @@ export default function Dashboard() {
       </SafeAreaView>
     );
   }
-
-  const maxMonthly = Math.max(
-    1,
-    ...(summary?.monthly_series ?? []).flatMap((m) => [m.income, m.expense])
-  );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -100,22 +208,14 @@ export default function Dashboard() {
             <Text style={styles.overline}>GOOD TO SEE YOU</Text>
             <Text style={styles.hello}>{user?.name?.split(" ")[0] || "Friend"}.</Text>
           </View>
-          <TouchableOpacity
-            testID="profile-avatar"
-            onPress={() => router.push("/(tabs)/profile")}
-            style={styles.avatar}
-          >
+          <TouchableOpacity testID="profile-avatar" onPress={() => router.push("/(tabs)/profile")} style={styles.avatar}>
             <Text style={styles.avatarText}>{(user?.name || "U").charAt(0).toUpperCase()}</Text>
           </TouchableOpacity>
         </View>
 
         {/* Month carousel */}
         <View style={styles.monthBar} testID="month-carousel">
-          <TouchableOpacity
-            testID="month-prev"
-            onPress={() => setMonth((m) => shiftMonth(m, -1))}
-            style={styles.monthArrow}
-          >
+          <TouchableOpacity testID="month-prev" onPress={() => setMonth((m) => shiftMonth(m, -1))} style={styles.monthArrow}>
             <Ionicons name="chevron-back" size={18} color={theme.colors.text} />
           </TouchableOpacity>
           <View style={styles.monthCenter}>
@@ -128,11 +228,7 @@ export default function Dashboard() {
               <Text style={styles.monthSubtle}>This month</Text>
             )}
           </View>
-          <TouchableOpacity
-            testID="month-next"
-            onPress={() => setMonth((m) => shiftMonth(m, 1))}
-            style={styles.monthArrow}
-          >
+          <TouchableOpacity testID="month-next" onPress={() => setMonth((m) => shiftMonth(m, 1))} style={styles.monthArrow}>
             <Ionicons name="chevron-forward" size={18} color={theme.colors.text} />
           </TouchableOpacity>
         </View>
@@ -154,9 +250,7 @@ export default function Dashboard() {
                   {formatCurrency((summary?.month_income ?? 0) + (summary?.month_projected_income ?? 0), currency)}
                 </Text>
                 {(summary?.month_projected_income ?? 0) > 0 ? (
-                  <Text style={styles.projHint}>
-                    incl. {formatCurrency(summary!.month_projected_income, currency)} upcoming
-                  </Text>
+                  <Text style={styles.projHint}>incl. {formatCurrency(summary!.month_projected_income, currency)} upcoming</Text>
                 ) : null}
               </View>
             </View>
@@ -171,9 +265,7 @@ export default function Dashboard() {
                   {formatCurrency((summary?.month_expense ?? 0) + (summary?.month_projected_expense ?? 0), currency)}
                 </Text>
                 {(summary?.month_projected_expense ?? 0) > 0 ? (
-                  <Text style={styles.projHint}>
-                    incl. {formatCurrency(summary!.month_projected_expense, currency)} upcoming
-                  </Text>
+                  <Text style={styles.projHint}>incl. {formatCurrency(summary!.month_projected_expense, currency)} upcoming</Text>
                 ) : null}
               </View>
             </View>
@@ -200,89 +292,160 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* Monthly trend */}
-        <View style={styles.section} testID="trend-card">
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>6-month rhythm</Text>
-            <Text style={styles.sectionHint}>income vs expense</Text>
-          </View>
-          <View style={styles.trendRow}>
-            {(summary?.monthly_series ?? []).length === 0 ? (
-              <Text style={styles.emptyText}>No data yet. Add a transaction to see your rhythm.</Text>
-            ) : (
-              (summary?.monthly_series ?? []).map((m) => (
-                <View key={m.month} style={styles.trendCol}>
-                  <View style={styles.trendBars}>
-                    <View
-                      style={[
-                        styles.bar,
-                        { backgroundColor: theme.colors.income, height: Math.max(4, (m.income / maxMonthly) * 100) },
-                      ]}
-                    />
-                    <View
-                      style={[
-                        styles.bar,
-                        { backgroundColor: theme.colors.expense, height: Math.max(4, (m.expense / maxMonthly) * 100) },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.trendLabel}>{m.month.slice(5)}</Text>
-                </View>
-              ))
-            )}
-          </View>
-          <View style={styles.legendRow}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: theme.colors.income }]} />
-              <Text style={styles.legendText}>Income</Text>
+        {/* Activity section */}
+        <View style={styles.activityHeader}>
+          <Text style={styles.activityTitle}>Activity</Text>
+          <View style={styles.countPills}>
+            <View style={[styles.countPill, { backgroundColor: theme.colors.income + "22" }]}>
+              <Text style={[styles.countPillText, { color: theme.colors.income }]}>{paidCount} paid</Text>
             </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: theme.colors.expense }]} />
-              <Text style={styles.legendText}>Expense</Text>
-            </View>
+            {unpaidCount > 0 ? (
+              <View style={[styles.countPill, { backgroundColor: theme.colors.accentSand + "33" }]}>
+                <Text style={[styles.countPillText, { color: theme.colors.expense }]}>{unpaidCount} upcoming</Text>
+              </View>
+            ) : null}
           </View>
         </View>
 
-        {/* Recent transactions */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent activity</Text>
-            <TouchableOpacity onPress={() => router.push("/(tabs)/transactions")}>
-              <Text style={styles.link}>See all</Text>
+        <View style={styles.searchBox}>
+          <Ionicons name="search" size={16} color={theme.colors.textMuted} />
+          <TextInput
+            testID="search-input"
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search description or category"
+            placeholderTextColor={theme.colors.textMuted}
+            style={styles.searchInput}
+          />
+        </View>
+
+        <View style={styles.chips}>
+          {(["all", "paid", "unpaid"] as const).map((f) => (
+            <TouchableOpacity
+              key={f}
+              testID={`filter-${f}`}
+              onPress={() => setPaidFilter(f)}
+              style={[styles.chip, paidFilter === f && styles.chipActive]}
+            >
+              <Text style={[styles.chipText, paidFilter === f && styles.chipTextActive]}>
+                {f.charAt(0).toUpperCase() + f.slice(1)}
+              </Text>
             </TouchableOpacity>
+          ))}
+        </View>
+
+        {monthTx.length === 0 ? (
+          <View style={styles.empty}>
+            <Ionicons name="leaf-outline" size={28} color={theme.colors.textMuted} />
+            <Text style={styles.emptyTitle}>Nothing here yet</Text>
+            <Text style={styles.emptyText}>Tap “Add transaction” to record your first one for this month.</Text>
           </View>
-          {(summary?.recent_transactions ?? []).length === 0 ? (
-            <Text style={styles.emptyText}>No transactions yet.</Text>
-          ) : (
-            (summary?.recent_transactions ?? []).map((t) => {
-              const cat = catMap[t.category];
-              return (
-                <View key={t.id} style={styles.txRow} testID={`recent-tx-${t.id}`}>
-                  <View style={[styles.txIcon, { backgroundColor: (cat?.color || theme.colors.primary) + "22" }]}>
-                    <Ionicons name={(cat?.icon as any) || "ellipse"} size={18} color={cat?.color || theme.colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.txTitle} numberOfLines={1}>
-                      {t.description || cat?.name || t.category}
-                    </Text>
+        ) : (
+          monthTx.map((t) => {
+            const cat = catMap[t.category];
+            const isProjected = !!t.projected;
+            const isPaid = !isProjected && t.paid !== false;
+            return (
+              <TouchableOpacity
+                key={t.id}
+                testID={`tx-${t.id}`}
+                onPress={() => !isProjected && goEdit(t)}
+                onLongPress={() => !isProjected && onDelete(t.id)}
+                disabled={isProjected}
+                activeOpacity={isProjected ? 1 : 0.6}
+                style={[styles.txRow, !isPaid && !isProjected && styles.txRowUnpaid, isProjected && styles.txRowProjected]}
+              >
+                {/* Paid checkbox — disabled for projections */}
+                <TouchableOpacity
+                  testID={`tx-paid-toggle-${t.id}`}
+                  onPress={(e: any) => {
+                    e?.stopPropagation?.();
+                    if (!isProjected) togglePaid(t);
+                  }}
+                  disabled={isProjected}
+                  hitSlop={8}
+                  style={[
+                    styles.paidBox,
+                    isProjected
+                      ? { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }
+                      : isPaid
+                      ? { backgroundColor: theme.colors.income, borderColor: theme.colors.income }
+                      : { borderColor: theme.colors.textMuted },
+                  ]}
+                >
+                  {isProjected ? (
+                    <Ionicons name="time-outline" size={12} color={theme.colors.textMuted} />
+                  ) : isPaid ? (
+                    <Ionicons name="checkmark" size={14} color={theme.colors.textInverse} />
+                  ) : null}
+                </TouchableOpacity>
+
+                <View style={[styles.txIcon, { backgroundColor: (cat?.color || theme.colors.primary) + "22" }]}>
+                  <Ionicons name={(cat?.icon as any) || "ellipse"} size={16} color={cat?.color || theme.colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.txTitle, !isPaid && !isProjected && styles.txTitleUnpaid]} numberOfLines={1}>
+                    {t.description || cat?.name || t.category}
+                  </Text>
+                  <View style={styles.txMetaRow}>
+                    {isProjected ? (
+                      <View style={styles.upcomingPill} testID={`tx-upcoming-${t.id}`}>
+                        <Text style={styles.upcomingPillText}>Upcoming</Text>
+                      </View>
+                    ) : !isPaid ? (
+                      <View style={styles.unpaidPill}>
+                        <Text style={styles.unpaidPillText}>Unpaid</Text>
+                      </View>
+                    ) : null}
+                    {t.recurring_rule_id ? (
+                      <View style={styles.recurBadge}>
+                        <Ionicons name="repeat" size={9} color={theme.colors.primary} />
+                        <Text style={styles.recurBadgeText}>Recurring</Text>
+                      </View>
+                    ) : null}
                     <Text style={styles.txMeta}>
                       {cat?.name || t.category} · {t.date.slice(0, 10)}
                     </Text>
                   </View>
-                  <Text
-                    style={[
-                      styles.txAmount,
-                      { color: t.type === "income" ? theme.colors.income : theme.colors.expense },
-                    ]}
-                  >
+                </View>
+                <View style={styles.rowActions}>
+                  <Text style={[styles.txAmount, { color: t.type === "income" ? theme.colors.income : theme.colors.expense }]}>
                     {t.type === "income" ? "+" : "-"}
                     {formatCurrency(t.amount, currency)}
                   </Text>
+                  {!isProjected ? (
+                    <View style={styles.iconBtnRow}>
+                      <TouchableOpacity
+                        testID={`tx-edit-${t.id}`}
+                        onPress={(e: any) => {
+                          e?.stopPropagation?.();
+                          goEdit(t);
+                        }}
+                        hitSlop={6}
+                        style={styles.miniBtn}
+                      >
+                        <Ionicons name="pencil" size={13} color={theme.colors.primary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        testID={`tx-delete-${t.id}`}
+                        onPress={(e: any) => {
+                          e?.stopPropagation?.();
+                          onDelete(t.id);
+                        }}
+                        hitSlop={6}
+                        style={styles.miniBtn}
+                      >
+                        <Ionicons name="trash-outline" size={13} color={theme.colors.expense} />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <Text style={styles.projHintInline}>auto on {t.date.slice(5, 10)}</Text>
+                  )}
                 </View>
-              );
-            })
-          )}
-        </View>
+              </TouchableOpacity>
+            );
+          })
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -291,140 +454,133 @@ export default function Dashboard() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  scroll: { padding: theme.spacing.lg, paddingBottom: 48 },
+  scroll: { padding: theme.spacing.lg, paddingBottom: 64 },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing.lg,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    marginBottom: theme.spacing.md,
   },
   overline: { fontSize: 11, letterSpacing: 3, color: theme.colors.textMuted, fontWeight: "600" },
-  hello: { fontSize: 28, fontWeight: "800", color: theme.colors.text, marginTop: 4, letterSpacing: -0.5 },
+  hello: { fontSize: 26, fontWeight: "800", color: theme.colors.text, marginTop: 4, letterSpacing: -0.5 },
+  avatar: {
+    width: 42, height: 42, borderRadius: 21, backgroundColor: theme.colors.primary,
+    alignItems: "center", justifyContent: "center",
+  },
+  avatarText: { color: theme.colors.textInverse, fontWeight: "700", fontSize: 15 },
   monthBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    backgroundColor: theme.colors.surfaceElevated,
-    borderRadius: theme.radius.pill,
-    paddingVertical: 8, paddingHorizontal: 8,
+    backgroundColor: theme.colors.surfaceElevated, borderRadius: theme.radius.pill,
+    paddingVertical: 6, paddingHorizontal: 6,
     marginBottom: theme.spacing.md,
     borderWidth: 1, borderColor: theme.colors.border,
   },
   monthArrow: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: theme.colors.surface,
-    alignItems: "center", justifyContent: "center",
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: theme.colors.surface, alignItems: "center", justifyContent: "center",
   },
   monthCenter: { flex: 1, alignItems: "center" },
-  monthLabel: { fontSize: 15, fontWeight: "700", color: theme.colors.text, letterSpacing: -0.2 },
-  monthSubtle: { fontSize: 11, color: theme.colors.textMuted, marginTop: 2 },
-  monthTodayLink: { fontSize: 11, color: theme.colors.primary, marginTop: 2, fontWeight: "600" },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: theme.colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: { color: theme.colors.textInverse, fontWeight: "700", fontSize: 16 },
+  monthLabel: { fontSize: 14, fontWeight: "700", color: theme.colors.text, letterSpacing: -0.2 },
+  monthSubtle: { fontSize: 10, color: theme.colors.textMuted, marginTop: 1 },
+  monthTodayLink: { fontSize: 10, color: theme.colors.primary, marginTop: 1, fontWeight: "600" },
   balanceCard: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radius.xl,
-    padding: theme.spacing.lg,
-    ...theme.shadow.card,
+    backgroundColor: theme.colors.primary, borderRadius: theme.radius.xl,
+    padding: theme.spacing.lg, ...theme.shadow.card,
   },
-  balanceLabel: { color: "#DCE6E1", fontSize: 12, letterSpacing: 2, fontWeight: "600" },
-  balanceValue: {
-    color: theme.colors.textInverse,
-    fontSize: 42,
-    fontWeight: "800",
-    letterSpacing: -1.5,
-    marginTop: 6,
-  },
+  balanceLabel: { color: "#DCE6E1", fontSize: 11, letterSpacing: 2, fontWeight: "600" },
+  balanceValue: { color: theme.colors.textInverse, fontSize: 36, fontWeight: "800", letterSpacing: -1.2, marginTop: 4 },
   balanceRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: theme.spacing.lg,
-    paddingTop: theme.spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: "#ffffff20",
+    flexDirection: "row", alignItems: "center",
+    marginTop: theme.spacing.md, paddingTop: theme.spacing.sm,
+    borderTopWidth: 1, borderTopColor: "#ffffff20",
   },
   balanceCell: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
   chipUp: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: theme.colors.income,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.income,
+    alignItems: "center", justifyContent: "center",
   },
   chipDown: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: theme.colors.expense,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.expense,
+    alignItems: "center", justifyContent: "center",
   },
-  cellLabel: { color: "#DCE6E1", fontSize: 11, fontWeight: "600", letterSpacing: 1.5 },
-  cellValue: { color: theme.colors.textInverse, fontSize: 15, fontWeight: "700" },
+  cellLabel: { color: "#DCE6E1", fontSize: 10, fontWeight: "600", letterSpacing: 1.5 },
+  cellValue: { color: theme.colors.textInverse, fontSize: 14, fontWeight: "700" },
   projHint: { color: "#DCE6E1", fontSize: 10, marginTop: 1, fontStyle: "italic", opacity: 0.85 },
-  verticalDivider: { width: 1, height: 32, backgroundColor: "#ffffff20", marginHorizontal: 8 },
-  quickRow: { flexDirection: "row", gap: 12, marginTop: theme.spacing.lg },
+  verticalDivider: { width: 1, height: 30, backgroundColor: "#ffffff20", marginHorizontal: 6 },
+  quickRow: { flexDirection: "row", gap: 10, marginTop: theme.spacing.md, marginBottom: theme.spacing.lg },
   quickBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: theme.radius.pill,
+    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 6, paddingVertical: 12, borderRadius: theme.radius.pill,
   },
-  quickText: { fontWeight: "700", fontSize: 14 },
-  section: {
-    marginTop: theme.spacing.lg,
+  quickText: { fontWeight: "700", fontSize: 13 },
+  activityHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  activityTitle: { fontSize: 15, fontWeight: "700", color: theme.colors.text, letterSpacing: -0.2 },
+  countPills: { flexDirection: "row", gap: 6 },
+  countPill: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: theme.radius.pill },
+  countPillText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
+  searchBox: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 12, paddingVertical: 8,
     backgroundColor: theme.colors.surfaceElevated,
-    borderRadius: theme.radius.xl,
-    padding: theme.spacing.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    ...theme.shadow.soft,
+    borderWidth: 1, borderColor: theme.colors.border,
+    borderRadius: theme.radius.md, marginBottom: 8,
   },
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
-    marginBottom: theme.spacing.md,
+  searchInput: { flex: 1, fontSize: 13, color: theme.colors.text },
+  chips: { flexDirection: "row", gap: 6, marginBottom: theme.spacing.md },
+  chip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border,
   },
-  sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.colors.text, letterSpacing: -0.2 },
-  sectionHint: { fontSize: 11, color: theme.colors.textMuted },
-  link: { color: theme.colors.primary, fontWeight: "700", fontSize: 12 },
-  trendRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    height: 130,
-    paddingVertical: 8,
-  },
-  trendCol: { alignItems: "center", flex: 1, gap: 6 },
-  trendBars: { flexDirection: "row", alignItems: "flex-end", gap: 3, height: 100 },
-  bar: { width: 8, borderRadius: 4 },
-  trendLabel: { fontSize: 10, color: theme.colors.textMuted, marginTop: 4 },
-  legendRow: { flexDirection: "row", gap: 16, marginTop: 8 },
-  legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
-  legendDot: { width: 8, height: 8, borderRadius: 4 },
-  legendText: { fontSize: 12, color: theme.colors.textMuted },
-  emptyText: { color: theme.colors.textMuted, fontSize: 14, textAlign: "center", paddingVertical: 16 },
+  chipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  chipText: { fontSize: 12, fontWeight: "600", color: theme.colors.textMuted },
+  chipTextActive: { color: theme.colors.textInverse },
+  empty: { alignItems: "center", paddingVertical: 32, gap: 6 },
+  emptyTitle: { fontSize: 15, fontWeight: "700", color: theme.colors.text },
+  emptyText: { fontSize: 12, color: theme.colors.textMuted, textAlign: "center", paddingHorizontal: 24 },
   txRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingVertical: 10, paddingHorizontal: 12,
+    backgroundColor: theme.colors.surfaceElevated,
+    borderRadius: theme.radius.lg, marginBottom: 8,
+    borderWidth: 1, borderColor: theme.colors.border,
   },
-  txIcon: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  txRowUnpaid: { backgroundColor: theme.colors.accentSand + "18", borderColor: theme.colors.accentSand + "60" },
+  txRowProjected: { backgroundColor: theme.colors.primaryLight + "80", borderColor: theme.colors.primary + "40", borderStyle: "dashed" },
+  upcomingPill: {
+    paddingHorizontal: 6, paddingVertical: 1,
+    backgroundColor: theme.colors.primary, borderRadius: theme.radius.pill,
+  },
+  upcomingPillText: { fontSize: 9, fontWeight: "700", color: theme.colors.textInverse, letterSpacing: 0.4, textTransform: "uppercase" },
+  projHintInline: { fontSize: 10, color: theme.colors.textMuted, fontStyle: "italic", marginTop: 2 },
+  paidBox: {
+    width: 22, height: 22, borderRadius: 11,
+    borderWidth: 1.5, alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.colors.bg,
+  },
+  txIcon: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
   txTitle: { fontSize: 13, fontWeight: "600", color: theme.colors.text },
-  txMeta: { fontSize: 11, color: theme.colors.textMuted, marginTop: 1 },
+  txTitleUnpaid: { color: theme.colors.textMuted, textDecorationLine: "line-through" },
+  txMetaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" },
+  unpaidPill: {
+    paddingHorizontal: 6, paddingVertical: 1,
+    backgroundColor: theme.colors.expense, borderRadius: theme.radius.pill,
+  },
+  unpaidPillText: { fontSize: 9, fontWeight: "700", color: theme.colors.textInverse, letterSpacing: 0.4 },
+  recurBadge: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    paddingHorizontal: 6, paddingVertical: 1,
+    backgroundColor: theme.colors.primaryLight, borderRadius: theme.radius.pill,
+  },
+  recurBadgeText: { fontSize: 9, fontWeight: "700", color: theme.colors.primary, letterSpacing: 0.4, textTransform: "uppercase" },
+  txMeta: { fontSize: 11, color: theme.colors.textMuted },
+  rowActions: { alignItems: "flex-end", gap: 4 },
   txAmount: { fontSize: 13, fontWeight: "700" },
+  iconBtnRow: { flexDirection: "row", gap: 4 },
+  miniBtn: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    alignItems: "center", justifyContent: "center",
+  },
 });
-

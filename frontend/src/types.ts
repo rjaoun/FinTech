@@ -16,6 +16,7 @@ export type Transaction = {
   date: string;
   created_at: string;
   recurring_rule_id?: string | null;
+  paid?: boolean;
 };
 
 export type Frequency = "daily" | "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly";

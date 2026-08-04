@@ -101,3 +101,78 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Rebuild the GitHub FinanceFocus app as a mobile application. Must include authentication that works in a mobile app, and AI-powered spending insights/category suggestions. Design agent decides the UI/UX."
+
+backend:
+  - task: "Transaction paid field & PATCH /transactions/{id}/paid endpoint"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added `paid: bool = True` on TransactionIn/Out; PATCH /transactions/{id}/paid endpoint sets paid; PUT /transactions/{id} now also persists paid. Startup backfill sets paid=true on legacy docs. Needs backend test for create/read/update/patch/delete round-trip of `paid` field."
+
+  - task: "Existing endpoints regression (auth, transactions CRUD, dashboard summary, recurring)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "No functional changes to auth/recurring/dashboard in this iteration; verify no regression from paid schema additions."
+
+frontend:
+  - task: "Dashboard + Activity merge with Paid/Unpaid sections & inline edit"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Removed obsolete (tabs)/transactions.tsx. Homepage now shows month carousel + balance + inline Activity list. Paid/Unpaid filter chips, checkbox toggles calling PATCH /transactions/{id}/paid, inline pencil/trash icons routing to /add-transaction?id=... with paid param. Search bar retained."
+
+  - task: "add-transaction preserves paid status on edit"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/add-transaction.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added paid param handling: reads params.paid ('0'|'1') and includes paid in PUT/POST payload. Fixed fallback route from removed /(tabs)/transactions to /(tabs)."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 7
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Transaction paid field & PATCH /transactions/{id}/paid endpoint"
+    - "Dashboard + Activity merge with Paid/Unpaid sections & inline edit"
+    - "add-transaction preserves paid status on edit"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Verified merged Dashboard renders correctly (screenshot captured; activity list, paid checkboxes and Paid/Unpaid filter visible). Deleted obsolete /(tabs)/transactions.tsx and its tab entry. Added `paid` param handling in add-transaction so editing an unpaid transaction no longer flips it to paid. Backend PATCH /transactions/{id}/paid was added by previous agent — needs first-time testing. Please test both backend (paid CRUD roundtrip via PATCH endpoint + PUT with paid=false persistence) and frontend (login as admin@financefocus.app/admin123, toggle paid checkbox, filter Paid/Unpaid, tap pencil to edit an unpaid tx and confirm it stays unpaid after save)."
+  - agent: "user"
+    message: "I added a transaction but I don't see it."
+  - agent: "main"
+    message: "BUG FIX iteration 8: user added a recurring transaction (POST /api/recurring in logs) but did not see it in the Dashboard Activity list. Root cause: Activity list only rendered `allTx` (real materialized transactions from GET /transactions) and completely ignored projected/upcoming recurring events. If a user adds a recurring rule with a future start date within the current month, or views a future month, no rows show even though the balance card includes the projection. FIX: Dashboard now also fetches GET /api/calendar?month=X and merges `projected` events into the Activity list with an 'Upcoming' pill, dashed border style, disabled paid checkbox (shows clock icon), and no edit/delete buttons — only informational 'auto on MM-DD' hint. Updated unpaid count pill label to 'upcoming' and includes projected events. Please retest: (1) login admin@financefocus.app/admin123, (2) add a NEW RECURRING transaction (any frequency, start date today or future within current month) and verify it appears in Activity list — either as a real row (materialized) if start<=today OR as an 'Upcoming' row (projected) otherwise. (3) Navigate to next month via arrow, verify projected recurring appears as Upcoming rows. (4) Confirm previously-tested paid toggle and inline edit still work on real (non-projected) rows. (5) Confirm delete on real row still works. Files changed: /app/frontend/app/(tabs)/index.tsx only."
