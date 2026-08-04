@@ -1,0 +1,41 @@
+{
+  "summary": "Backend-only regression testing of the materialize_due race-condition fix. Created /app/backend/tests/test_race_condition_recurring.py (13 tests, all pass) that hammers /api/transactions, /api/dashboard/summary, and /api/calendar with 10 parallel threads for a user with a 6-month-old monthly recurring rule and asserts exactly ONE materialized transaction per (rule_id, date). Also verified: (1) unique partial index uniq_user_rule_date exists and rejects direct duplicate inserts, (2) non-recurring transactions can still be freely inserted with the same (user_id, date, category) — the partial index only applies when recurring_rule_id is a string, (3) dashboard month_balance is idempotent across repeated calls (no drift), (4) future-month month_balance = cumulative_real + projected_income - projected_expense with no doubling, (5) startup de-dupe migration cleaned 3 pre-existing duplicates on this iteration's restart (logs confirm), 0 duplicates remain in DB. Ran the full backend regression suite: 117/120 pass; the 3 failures are pre-existing time-drift issues in tests that hardcode 2026-05..2026-08 as future dates but the server clock is now 2026-08-04 — NOT caused by this fix.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "test_calendar.py::test_calendar_projects_future_recurring", "issue": "Pre-existing time-drift: test hardcodes 2026-07 as a future month but server is at 2026-08-04, so rule is materialised (not projected). Not related to race-condition fix."},
+      {"endpoint": "test_calendar.py::test_calendar_totals_include_projected", "issue": "Pre-existing time-drift: uses 2026-08 (current month) with start_date 2026-08-01. Since today is 2026-08-04 the 08-01 occurrence is materialised and next_date advances; totals.projected_expense=0. Not related to race-condition fix."},
+      {"endpoint": "test_datepicker_enddate.py::test_create_recurring_with_end_date", "issue": "Pre-existing time-drift: rule spans 2026-05-01..2026-05-31 (already fully past). materialize_due auto-sets active=False on creation, but test asserts active is True. Not related to race-condition fix."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_race_condition_recurring.py",
+    "/app/test_reports/pytest/pytest_race_condition.xml"
+  ],
+  "action_items": [
+    "Optional: Refactor the 3 pre-existing time-drift tests (test_calendar.py x2, test_datepicker_enddate.py x1) to use dynamically-computed future dates like (today + 60 days) instead of hardcoded 2026-05..2026-08 strings, so they remain stable as calendar time advances.",
+    "No fix action required for the race-condition itself — verified working."
+  ],
+  "critical_code_review_comments": [
+    "materialize_due uses update_one({user_id, recurring_rule_id, date}, {$setOnInsert: doc}, upsert=True) — correctly atomically idempotent under concurrent invocation.",
+    "Startup de-dupe migration keeps earliest-created doc per (user, rule, date) group and deletes rest — safe and idempotent.",
+    "Unique partial index uniq_user_rule_date exists with correct partialFilterExpression {recurring_rule_id: {$type: 'string'}} — verified via listIndexes and via direct duplicate-insert test.",
+    "server.py is 1124 lines — approaching the 700-line split threshold. Consider modularising (auth, transactions, recurring, dashboard, calendar, ai) in a future iteration.",
+    "CORS allow_origins=['*'] combined with allow_credentials=True is technically invalid per CORS spec (browsers will reject credentialed requests with a wildcard). Not a bug for the mobile Bearer-token flow but flag for future web-support."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_race_condition_recurring.py (new)"
+  ],
+  "success_rate": {"backend": "100% (13/13 new race-condition tests) + 97.5% (117/120 full suite; 3 pre-existing time-drift failures)", "frontend": "not tested (backend-only iteration)"},
+  "seed_data_creation": "Each test registers an isolated test_race_<uuid>@example.com user and calls /api/users/me/reset in teardown. No production data touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Race-condition fix for materialize_due is verified. Duplicate materialized transactions are impossible now: (a) update_one $setOnInsert upsert is atomically idempotent, (b) unique partial index uniq_user_rule_date is a DB-level guard, (c) startup de-dupe migration cleans historical duplicates. When testing recurring-transaction behaviour going forward, use dynamically-computed dates (datetime.now() +/- timedelta) rather than hardcoded 2026-MM to avoid the time-drift issues in test_calendar.py and test_datepicker_enddate.py.",
+  "rca_of_issue": "USER REPORT: 'Balance is working fine for August but for other months it is not correct because it is calculating two rents in the same month.' ROOT CAUSE: Dashboard loads fire GET /transactions + /dashboard/summary + /calendar in parallel, and each endpoint called materialize_due which did (a) read rule.next_date, (b) INSERT a new materialized transaction, (c) advance next_date. Three concurrent readers each read the same past next_date and each inserted a duplicate row before any advanced the rule → two or three rows per (rule_id, date) for months where reads happened concurrently (e.g., 2026-07-01 for rent). Current month 'August' looked correct because the client cache primed dashboard first and the other two endpoints saw the already-advanced next_date. MITIGATION APPLIED: (1) materialize_due now uses update_one with $setOnInsert upsert keyed on (user_id, recurring_rule_id, date) — atomically idempotent. (2) Unique partial index uniq_user_rule_date is a defence-in-depth DB constraint. (3) One-time startup aggregation-based migration removed the 3 existing duplicates keeping the earliest-created row. VERIFIED: 10 parallel GETs across 3 endpoints produce exactly one row per (rule_id, date); direct duplicate insert is rejected with E11000; 0 duplicates in DB post-test."
+}

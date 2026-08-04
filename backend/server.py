@@ -358,7 +358,12 @@ def _advance(dt: datetime, frequency: str) -> datetime:
     return dt + timedelta(days=1)
 
 async def materialize_due(user_id: str) -> int:
-    """Create any past-due transactions for this user's active recurring rules. Returns count created."""
+    """Create any past-due transactions for this user's active recurring rules. Returns count created.
+
+    Uses upsert with a deterministic uniqueness key of (user_id, recurring_rule_id, date) so
+    concurrent invocations (e.g. dashboard load fires /transactions + /dashboard/summary + /calendar
+    in parallel) cannot create duplicate rows for the same recurring occurrence.
+    """
     now = datetime.now(timezone.utc)
     rules = await db.recurring_rules.find(
         {"user_id": user_id, "active": True}, {"_id": 0}
@@ -371,20 +376,32 @@ async def materialize_due(user_id: str) -> int:
         while next_dt <= now and safety < 500:
             if end_dt and next_dt > end_dt:
                 break
-            tid = str(uuid.uuid4())
+            date_iso = next_dt.isoformat()
             doc = {
-                "id": tid,
+                "id": str(uuid.uuid4()),
                 "user_id": user_id,
                 "amount": float(rule["amount"]),
                 "type": rule["type"],
                 "category": rule["category"],
                 "description": rule["description"],
-                "date": next_dt.isoformat(),
+                "date": date_iso,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "recurring_rule_id": rule["id"],
+                "paid": True,
             }
-            await db.transactions.insert_one(doc)
-            created += 1
+            # Idempotent upsert: if a doc with the same (user_id, rule_id, date) already
+            # exists we do nothing; otherwise insert. Prevents race-condition duplicates.
+            try:
+                res = await db.transactions.update_one(
+                    {"user_id": user_id, "recurring_rule_id": rule["id"], "date": date_iso},
+                    {"$setOnInsert": doc},
+                    upsert=True,
+                )
+                if res.upserted_id is not None:
+                    created += 1
+            except Exception:
+                # Duplicate key from a parallel writer — safe to ignore.
+                pass
             next_dt = _advance(next_dt, rule["frequency"])
             safety += 1
         update: dict = {"next_date": next_dt.isoformat()}
@@ -1043,6 +1060,39 @@ async def startup():
     await db.transactions.create_index([("user_id", 1), ("date", -1)])
     # Default any pre-existing transactions to paid=true (idempotent backfill)
     await db.transactions.update_many({"paid": {"$exists": False}}, {"$set": {"paid": True}})
+    # One-time de-duplication: earlier versions of materialize_due had a race
+    # condition where parallel /transactions + /dashboard/summary + /calendar
+    # requests could each insert the same recurring occurrence. Clean up
+    # existing duplicates keeping the earliest-created row.
+    dupe_cursor = db.transactions.aggregate([
+        {"$match": {"recurring_rule_id": {"$ne": None}}},
+        {"$group": {
+            "_id": {"user_id": "$user_id", "rule": "$recurring_rule_id", "date": "$date"},
+            "ids": {"$push": {"id": "$id", "created_at": "$created_at"}},
+            "count": {"$sum": 1},
+        }},
+        {"$match": {"count": {"$gt": 1}}},
+    ])
+    async for group in dupe_cursor:
+        # Keep the first-created; delete the rest.
+        keep = sorted(group["ids"], key=lambda x: x.get("created_at") or "")[0]["id"]
+        drop_ids = [x["id"] for x in group["ids"] if x["id"] != keep]
+        if drop_ids:
+            await db.transactions.delete_many({"id": {"$in": drop_ids}})
+            logger.info(
+                "de-duped %d recurring-materialized transaction row(s) for rule %s date %s",
+                len(drop_ids), group["_id"]["rule"], group["_id"]["date"],
+            )
+    # Unique partial index prevents future duplicates for materialized recurring rows.
+    try:
+        await db.transactions.create_index(
+            [("user_id", 1), ("recurring_rule_id", 1), ("date", 1)],
+            unique=True,
+            partialFilterExpression={"recurring_rule_id": {"$type": "string"}},
+            name="uniq_user_rule_date",
+        )
+    except Exception as e:
+        logger.warning("Could not create unique recurring index: %s", e)
     await db.budgets.create_index([("user_id", 1), ("month", 1), ("category", 1)])
     await db.goals.create_index([("user_id", 1), ("created_at", -1)])
     await db.recurring_rules.create_index([("user_id", 1), ("active", 1)])
