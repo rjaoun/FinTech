@@ -30,6 +30,8 @@ export default function Recurring() {
       const [r, c] = await Promise.all([api.get("/recurring"), api.get("/categories")]);
       setRules(r.data);
       setCategories(c.data);
+    } catch {
+      // Silently ignore; 401 interceptor handles auth bounce.
     } finally {
       setLoading(false);
     }

@@ -47,6 +47,8 @@ export default function Budgets() {
       ]);
       setBudgets(b.data);
       setCategories(c.data);
+    } catch {
+      // Silently ignore; 401 interceptor handles auth bounce.
     } finally {
       setLoading(false);
     }

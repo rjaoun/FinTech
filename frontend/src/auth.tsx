@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { api, getToken, saveToken, clearToken, formatApiErrorDetail } from "./api";
+import { api, getToken, saveToken, clearToken, formatApiErrorDetail, setUnauthorizedHandler } from "./api";
 
 export type User = {
   id: string;
@@ -47,6 +47,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     })();
   }, [refresh]);
+
+  // Register global 401 handler so any expired/missing-token response quietly
+  // logs the user out; RootGate then redirects to /(auth)/login.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null);
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
 
   const login = async (email: string, password: string) => {
     try {

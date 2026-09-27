@@ -80,6 +80,8 @@ export default function CalendarScreen() {
       ]);
       setData(cal.data);
       setCategories(cats.data);
+    } catch {
+      // 401 or transient error — the interceptor bounces to /login if unauth.
     } finally {
       setLoading(false);
     }

@@ -39,6 +39,8 @@ export default function Goals() {
     try {
       const r = await api.get("/goals");
       setItems(r.data);
+    } catch {
+      // Silently ignore; 401 interceptor handles auth bounce.
     } finally {
       setLoading(false);
     }

@@ -58,6 +58,11 @@ export default function Dashboard() {
   const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
+    if (!user) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     try {
       const [s, c, t, cal] = await Promise.all([
         api.get(`/dashboard/summary?month=${month}`),
@@ -90,11 +95,14 @@ export default function Dashboard() {
         }
       }
       setProjected(projList);
+    } catch {
+      // Silently ignore — the 401 interceptor will bounce the user to /login,
+      // and transient errors just leave the previous state in place.
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [month, user?.id]);
+  }, [month, user]);
 
   useFocusEffect(
     useCallback(() => {

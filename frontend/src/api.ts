@@ -64,6 +64,33 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// Global 401 handler: silently clear the token so RootGate will route the user
+// back to /(auth)/login on the next render pass. This prevents Expo's LogBox
+// from surfacing "Uncaught Error: Request failed with status code 401" whenever
+// the token is missing / expired / revoked (e.g. right after logout, on cold
+// start before hydration finishes, or when a JWT ages out).
+let _onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  _onUnauthorized = fn;
+}
+
+api.interceptors.response.use(
+  (r) => r,
+  async (error) => {
+    if (error?.response?.status === 401) {
+      try {
+        await clearToken();
+      } catch {}
+      if (_onUnauthorized) {
+        try {
+          _onUnauthorized();
+        } catch {}
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export function formatApiErrorDetail(detail: any): string {
   if (detail == null) return "Something went wrong. Please try again.";
   if (typeof detail === "string") return detail;

@@ -1,0 +1,39 @@
+{
+  "summary": "Frontend-only verification of the 401 LogBox red-overlay bug fix on the FinanceFocus Expo web preview. All primary scenarios PASS and no red LogBox 'Uncaught Error: Request failed with status code 401' overlay surfaced in any tested flow. (1) Cold-load with NO stored token → login screen rendered cleanly, no overlay, no 'Log 1 of' banner. (2) Login as admin@financefocus.app / admin123 → dashboard renders (balance card, activity list, add-transaction CTA, month carousel, tabs). Then wiped localStorage.ff_access_token and reloaded → app silently bounced to /(auth)/login with NO red overlay. (3) All (tabs) — Home, Insights, Goals, Profile — render without LogBox surfacing after authentication. (4) Calendar CTA navigation works cleanly. (5) Logout via Profile → confirm dialog → returns to /(auth)/login with token cleared and NO LogBox error. Verified code-side that all screens (dashboard, goals, insights, calendar, budgets, recurring) now wrap Promise.all(...) in try{}catch{}finally{}, api.ts registers a response interceptor that on 401 silently clears the token and fires setUnauthorizedHandler, and auth.tsx registers that handler to null out user state so RootGate redirects to /(auth)/login. Only console noise observed was pre-existing Expo/React-Native deprecation warnings for 'shadow*' style props and 'props.pointerEvents' (unchanged by this fix).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Deprecation warnings (pre-existing, non-blocking)", "issue": "Console shows repeated warnings: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' and 'props.pointerEvents is deprecated. Use style.pointerEvents'. Not related to this bug fix but worth cleaning up in a future iteration. Reference: react-native-web deprecation notices."}
+    ]
+  },
+  "test_report_links": [
+    "/tmp/t1_cold_load.png",
+    "/tmp/t2_dashboard.png",
+    "/tmp/t2_stale_token.png",
+    "/tmp/t3_final.png",
+    "/tmp/logout_final.png"
+  ],
+  "action_items": [
+    "No functional action required — the 401 LogBox bug fix is verified working end-to-end.",
+    "Optional cleanup: address 'shadow*' style prop and 'props.pointerEvents' React-Native-Web deprecation warnings in a future iteration (they are noisy in console but do not affect behaviour)."
+  ],
+  "critical_code_review_comments": [
+    "api.ts response interceptor correctly guards with try{}catch{} around clearToken() and the handler invocation — safe against handler exceptions.",
+    "auth.tsx registers setUnauthorizedHandler in a useEffect and returns a cleanup that sets it back to null — no leak across remounts.",
+    "Dashboard.load() correctly short-circuits when user is null (setLoading(false) + setRefreshing(false)) so no 401 requests fire during the brief window before hydration + redirect. Good defensive pattern.",
+    "All five screens (dashboard, goals, calendar, budgets, recurring, insights) have try{}catch{}finally{} around Promise.all(...) — verified via grep."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend-only iteration)", "frontend": "100% (5/5 primary bug scenarios + all regression flows pass)"},
+  "seed_data_creation": "None. Used existing seeded admin@financefocus.app / admin123.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The 401 red-overlay LogBox bug is fully fixed. Pattern to preserve in future changes: (1) every screen's load() must wrap Promise.all in try{}catch{}finally{} so parallel rejection doesn't bubble as an unhandled promise rejection that Expo LogBox will surface as red overlay. (2) The global 401 interceptor in src/api.ts silently clears ff_access_token and calls setUnauthorizedHandler which nulls the user in auth.tsx, causing RootGate to redirect to /(auth)/login. (3) On web the token lives in localStorage under 'ff_access_token' — use `localStorage.removeItem('ff_access_token')` + reload to simulate a stale/expired session. Login form has two <input> elements (email, password) and a 'Sign in' text button.",
+  "rca_of_issue": "USER REPORT: 'Uncaught Error: Request failed with status code 401 at node_modules/axios/lib/core/settle.js:20:21' surfaces as full-screen red LogBox overlay. ROOT CAUSE: several screens' load() used try{}finally{} without catch{} around a Promise.all([...]) of authenticated API calls. When the auth token was missing or expired, the individual axios calls rejected with 401, and because there was no catch, the Promise.all rejection became an unhandled promise rejection which Expo's LogBox surfaces as 'Uncaught Error' with a red overlay. MITIGATION APPLIED (verified by code review + runtime test): (1) src/api.ts adds `setUnauthorizedHandler(fn)` plus an axios response interceptor that on 401 silently clears the token (localStorage / SecureStore) and fires the handler, before rejecting. (2) src/auth.tsx registers a handler that sets user=null so RootGate redirects to /(auth)/login. (3) Every screen's load() now has try{}catch{}finally{} — any residual rejection is swallowed silently (401 is already handled globally; transient errors just keep previous state). (4) Dashboard.load() short-circuits when user is null. VERIFIED via Playwright: no LogBox surfaces on cold-load-no-token, login+wipe+reload, any tab navigation, Calendar CTA, or logout."
+}
