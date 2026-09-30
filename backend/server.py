@@ -29,6 +29,7 @@ DEFAULT_CATEGORIES = [
     {"id": "food", "name": "Food & Dining", "icon": "restaurant", "color": "#C85A40", "type": "expense"},
     {"id": "transport", "name": "Transport", "icon": "car", "color": "#4A7059", "type": "expense"},
     {"id": "shopping", "name": "Shopping", "icon": "bag", "color": "#D4A574", "type": "expense"},
+    {"id": "rent", "name": "Rent", "icon": "home", "color": "#8B6F47", "type": "expense"},
     {"id": "bills", "name": "Bills & Utilities", "icon": "receipt", "color": "#8B6F47", "type": "expense"},
     {"id": "entertainment", "name": "Entertainment", "icon": "film", "color": "#A55A7E", "type": "expense"},
     {"id": "health", "name": "Health", "icon": "medkit", "color": "#5A8A9C", "type": "expense"},
@@ -887,6 +888,39 @@ async def delete_recurring(
     if delete_generated:
         await db.transactions.delete_many({"user_id": user["id"], "recurring_rule_id": rid})
     return {"ok": True}
+
+class RecurringUpdateBody(BaseModel):
+    amount: Optional[float] = None
+    type: Optional[Literal["income", "expense"]] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+
+
+@api_router.put("/recurring/{rid}", response_model=RecurringOut)
+async def update_recurring(rid: str, body: RecurringUpdateBody, user: dict = Depends(get_current_user)):
+    """Update a recurring rule and cascade the change to every transaction it
+    has already generated (all rows sharing this recurring_rule_id). This is the
+    'apply to entire series' flow triggered from the Dashboard when a user
+    edits a recurring transaction."""
+    rule = await db.recurring_rules.find_one({"id": rid, "user_id": user["id"]})
+    if not rule:
+        raise HTTPException(status_code=404, detail="Recurring rule not found")
+    update = {k: v for k, v in body.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    if "amount" in update:
+        update["amount"] = float(update["amount"])
+    await db.recurring_rules.update_one(
+        {"id": rid, "user_id": user["id"]}, {"$set": update}
+    )
+    # Cascade to all previously-materialized transactions in this series.
+    await db.transactions.update_many(
+        {"user_id": user["id"], "recurring_rule_id": rid},
+        {"$set": update},
+    )
+    fresh = await db.recurring_rules.find_one({"id": rid}, {"_id": 0})
+    return fresh
+
 
 @api_router.patch("/recurring/{rid}", response_model=RecurringOut)
 async def toggle_recurring(rid: str, user: dict = Depends(get_current_user)):

@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 10 (rent category, income no-paid-toggle, delete/edit recurring choice modals, PUT /api/recurring/{rid} cascade) fully verified end-to-end. Backend: 10/10 new tests pass in test_recurring_update.py + test_categories.py (updated to 16 categories including 'rent'). Full regression suite: 130/134 pass; the 4 failing tests are pre-existing and unrelated to this iteration (calendar projection ordering, datepicker end-date active flag, unique-index test needs MONGO_URL env). Frontend: (a) Rent category chip is visible and selectable on Add/Edit transaction. (b) Income rows never render tx-paid-toggle — they render a static green down-arrow indicator; expense rows still render the paid checkbox. (c) 'Unpaid' filter hides income (0 income amount elements shown); 'Paid' filter shows income (19). (d) Trash on a recurring row opens a choice modal titled 'Delete recurring transaction?' with choice-dialog-one / choice-dialog-series / choice-dialog-cancel — 'Just this one' deletes exactly one row (4->3); 'Delete entire series' calls DELETE /recurring/{rid}?delete_generated=true and removes rule + all rows (rule_exists=false, rows_left=0). (e) Pencil on a recurring row opens a choice modal titled 'Edit recurring transaction?' with choice-dialog-one / choice-dialog-all — 'Update entire series' navigates to /add-transaction?...&scope=all, header shows 'Edit series', green banner (testID editing-series-banner) reads 'Editing the entire recurring series — changes apply to every transaction in this series.', DatePicker is hidden, and saving cascades: PUT /api/recurring/{rid} then all 4 previously-materialized rows have amount=199.99, category='rent', description='UI_EDIT_ALL2_UPDATED'. (f) Non-recurring pencil navigates directly (scope=one), header 'Edit transaction', Date field visible. (g) Non-recurring trash opens simple confirm dialog (confirm-dialog-confirm), not choice. No LogBox red overlay observed in any flow.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Deprecation warnings (pre-existing, non-blocking)", "issue": "Console continues to emit '\"shadow*\" style props are deprecated. Use \"boxShadow\".' and 'props.pointerEvents is deprecated. Use style.pointerEvents' warnings. Not blocking; unchanged since iteration 9. Reference: react-native-web deprecation notices."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_recurring_update.py",
+    "/app/backend/tests/test_categories.py",
+    "/app/test_reports/pytest/pytest_iteration10.xml",
+    "/app/test_reports/pytest/pytest_iteration10_full.xml",
+    "/tmp/dash.png",
+    "/tmp/delete_choice.png",
+    "/tmp/edit_series.png"
+  ],
+  "action_items": [
+    "No functional action required — all 4 requested changes (rent category, income no-paid-toggle, delete-recurring choice modal, edit-recurring choice modal with cascade) are working end-to-end.",
+    "Pre-existing calendar projection tests (test_calendar.py::test_calendar_projects_future_recurring, test_calendar_totals_include_projected) fail when run after other tests that clean up data — main agent may want to make them self-seeding in a future iteration.",
+    "Pre-existing test_datepicker_enddate.py::test_create_recurring_with_end_date fails because rule.active is False when end_date is in the past; unrelated to iteration 10.",
+    "Pre-existing test_race_condition_recurring.py::test_direct_duplicate_insert_rejected fails because it reads MONGO_URL from os.environ directly (not loaded from backend/.env) — trivial to fix by mirroring the frontend .env loading pattern.",
+    "Optional cleanup: address 'shadow*' style prop and 'props.pointerEvents' React-Native-Web deprecation warnings (unchanged since iteration 9)."
+  ],
+  "critical_code_review_comments": [
+    "PUT /api/recurring/{rid} correctly builds `update` dict from non-None fields, validates 400 on empty body, casts amount to float, and cascades via update_many({user_id, recurring_rule_id: rid}, {$set: update}). Server-side implementation is clean.",
+    "RecurringUpdateBody uses Literal['income','expense'] for type so wrong values return 422 via Pydantic — good.",
+    "ConfirmDialog useChoice() shares state with useConfirm() via a single Modal — no risk of two overlapping dialogs. Cancel handler correctly resolves boolResolver/choiceResolver depending on which was open.",
+    "Dashboard onDelete/goEdit correctly branch on `t.recurring_rule_id` to choose between confirm vs choice modal — non-recurring flow untouched.",
+    "Cascade on PUT applies $set of only the fields sent, so previously-materialized rows keep their per-row `date` and `paid` state (verified: 4 rows updated but individual dates preserved). This is the correct semantic for 'edit entire series'.",
+    "One nit: RecurringUpdateBody does not accept `frequency`, `start_date`, or `end_date` — if a user wants to change the schedule of an existing series this API cannot do it. This is not part of the current review request; flagging as future enhancement only."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_categories.py (updated expected count 15 -> 16 and added rent assertions)",
+    "/app/backend/tests/test_recurring_update.py (new: 8 tests for rent + PUT /recurring/{rid} + regression)"
+  ],
+  "success_rate": {
+    "backend": "10/10 (100%) for new iteration-10 tests; 130/134 (97%) full suite (4 pre-existing failures unrelated)",
+    "frontend": "100% (all 4 requested UI behaviours plus regression flows pass)"
+  },
+  "seed_data_creation": "Playwright tests created ephemeral rules/transactions via the authenticated API using stored ff_access_token and cleaned them up in the same script. Pytest tests use TEST_-prefixed data and clean up in try/finally blocks. No persistent seed data added.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 10 shipped: (1) 'rent' category (id='rent', color=#8B6F47, icon=home, type=expense) — 16 categories total. (2) Income rows on Dashboard never render testID `tx-paid-toggle-<id>`; they render a static green down-arrow indicator instead. (3) Trash on a recurring row (row with recurring_rule_id set) opens a vertical choice modal — testIDs `choice-dialog-one`, `choice-dialog-series`, `choice-dialog-cancel`. (4) Pencil on a recurring row opens a vertical choice modal — testIDs `choice-dialog-one`, `choice-dialog-all`, `choice-dialog-cancel`. Choosing 'all' navigates to /add-transaction with `scope=all` and `recurring_rule_id=<rid>` query params. On that screen: header text 'Edit series', banner testID `editing-series-banner`, DatePicker hidden, Save fires PUT /api/recurring/{rid} which cascades to all rows via update_many. (5) Non-recurring rows use the previous simple confirm/direct-edit flows unchanged. Preview URL: http://localhost:3000. Backend base URL: EXPO_PUBLIC_BACKEND_URL from frontend/.env.",
+  "rca_of_issue": "No bugs identified in this iteration. All 4 user-requested changes are correctly implemented and verified end-to-end via 10 new pytest cases + a live Playwright walk-through that created a real weekly recurring rule with 4 materialized transactions, edited the series (amount 33 -> 199.99, category food -> rent, description -> UI_EDIT_ALL2_UPDATED), verified all 4 rows cascaded, then deleted the entire series and verified rule + rows removed."
+}

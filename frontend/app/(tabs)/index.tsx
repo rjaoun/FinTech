@@ -16,7 +16,7 @@ import { theme, formatCurrency } from "../../src/theme";
 import { api } from "../../src/api";
 import { useAuth } from "../../src/auth";
 import { DashboardSummary, Category, Transaction } from "../../src/types";
-import { useConfirm } from "../../src/components/ConfirmDialog";
+import { useConfirm, useChoice } from "../../src/components/ConfirmDialog";
 import { refreshBus } from "../../src/refresh-bus";
 
 const MONTH_NAMES_FULL = [
@@ -47,6 +47,7 @@ export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
   const confirm = useConfirm();
+  const choose = useChoice();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [allTx, setAllTx] = useState<Transaction[]>([]);
@@ -125,13 +126,22 @@ export default function Dashboard() {
 
   // Filter transactions for the selected month + search + paid status.
   // Include projected (upcoming recurring) events so users see what's coming.
+  // NOTE: paid/unpaid state only applies to EXPENSES — income rows are always
+  // considered "received" and are shown under both All and Paid filters, and
+  // hidden from the Unpaid filter (unless they are projected upcoming).
   const monthTx = useMemo(() => {
     const target = month;
     const real = allTx.filter((t) => txMonth(t) === target);
     const proj = projected.filter((t) => txMonth(t) === target);
     let list: (Transaction & { projected?: boolean })[] = [...real, ...proj];
-    if (paidFilter === "paid") list = list.filter((t) => !t.projected && t.paid !== false);
-    if (paidFilter === "unpaid") list = list.filter((t) => t.projected || t.paid === false);
+    if (paidFilter === "paid")
+      list = list.filter(
+        (t) => !t.projected && (t.type === "income" || t.paid !== false)
+      );
+    if (paidFilter === "unpaid")
+      list = list.filter(
+        (t) => t.projected || (t.type === "expense" && t.paid === false)
+      );
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter(
@@ -145,12 +155,16 @@ export default function Dashboard() {
     return list;
   }, [allTx, projected, month, paidFilter, query, catMap]);
 
-  const paidCount = monthTx.filter((t) => !t.projected && t.paid !== false).length;
+  const paidCount = monthTx.filter(
+    (t) => !t.projected && t.type === "expense" && t.paid !== false
+  ).length;
   const unpaidCount =
-    allTx.filter((t) => txMonth(t) === month && t.paid === false).length +
-    projected.filter((t) => txMonth(t) === month).length;
+    allTx.filter(
+      (t) => txMonth(t) === month && t.type === "expense" && t.paid === false
+    ).length + projected.filter((t) => txMonth(t) === month).length;
 
   const togglePaid = async (t: Transaction) => {
+    if (t.type !== "expense") return; // paid state only applies to expenses
     const newPaid = !(t.paid !== false);
     // Optimistic update
     setAllTx((prev) => prev.map((x) => (x.id === t.id ? { ...x, paid: newPaid } : x)));
@@ -164,7 +178,37 @@ export default function Dashboard() {
     }
   };
 
-  const onDelete = async (id: string) => {
+  const onDelete = async (t: Transaction) => {
+    // Recurring rows: ask whether to delete just this occurrence or the entire series.
+    if (t.recurring_rule_id) {
+      const pick = await choose({
+        title: "Delete recurring transaction?",
+        message:
+          "This is part of a recurring series. Would you like to remove just this one, or the whole series?",
+        icon: "repeat",
+        choices: [
+          { key: "one", label: "Just this one", destructive: true },
+          { key: "series", label: "Delete entire series", destructive: true },
+        ],
+      });
+      if (!pick) return;
+      try {
+        if (pick === "series") {
+          await api.delete(
+            `/recurring/${t.recurring_rule_id}?delete_generated=true`
+          );
+          setAllTx((prev) =>
+            prev.filter((x) => x.recurring_rule_id !== t.recurring_rule_id)
+          );
+        } else {
+          await api.delete(`/transactions/${t.id}`);
+          setAllTx((prev) => prev.filter((x) => x.id !== t.id));
+        }
+        load();
+      } catch {}
+      return;
+    }
+    // Non-recurring: standard confirmation.
     const ok = await confirm({
       title: "Delete transaction?",
       message: "This cannot be undone.",
@@ -173,13 +217,28 @@ export default function Dashboard() {
     });
     if (!ok) return;
     try {
-      await api.delete(`/transactions/${id}`);
-      setAllTx((prev) => prev.filter((x) => x.id !== id));
+      await api.delete(`/transactions/${t.id}`);
+      setAllTx((prev) => prev.filter((x) => x.id !== t.id));
       load();
     } catch {}
   };
 
-  const goEdit = (t: Transaction) => {
+  const goEdit = async (t: Transaction) => {
+    let scope: "one" | "all" = "one";
+    if (t.recurring_rule_id) {
+      const pick = await choose({
+        title: "Edit recurring transaction?",
+        message:
+          "This is part of a recurring series. Do you want to change just this one, or update every transaction in the series?",
+        icon: "create-outline",
+        choices: [
+          { key: "one", label: "Only this transaction", primary: true },
+          { key: "all", label: "Update entire series", primary: true },
+        ],
+      });
+      if (!pick) return;
+      scope = pick as "one" | "all";
+    }
     router.push({
       pathname: "/add-transaction",
       params: {
@@ -190,6 +249,8 @@ export default function Dashboard() {
         type: t.type,
         date: t.date,
         paid: t.paid === false ? "0" : "1",
+        recurring_rule_id: t.recurring_rule_id || "",
+        scope,
       },
     });
   };
@@ -352,47 +413,61 @@ export default function Dashboard() {
           monthTx.map((t) => {
             const cat = catMap[t.category];
             const isProjected = !!t.projected;
+            const isIncome = t.type === "income";
             const isPaid = !isProjected && t.paid !== false;
             return (
               <TouchableOpacity
                 key={t.id}
                 testID={`tx-${t.id}`}
                 onPress={() => !isProjected && goEdit(t)}
-                onLongPress={() => !isProjected && onDelete(t.id)}
+                onLongPress={() => !isProjected && onDelete(t)}
                 disabled={isProjected}
                 activeOpacity={isProjected ? 1 : 0.6}
-                style={[styles.txRow, !isPaid && !isProjected && styles.txRowUnpaid, isProjected && styles.txRowProjected]}
+                style={[styles.txRow, !isPaid && !isProjected && !isIncome && styles.txRowUnpaid, isProjected && styles.txRowProjected]}
               >
-                {/* Paid checkbox — disabled for projections */}
-                <TouchableOpacity
-                  testID={`tx-paid-toggle-${t.id}`}
-                  onPress={(e: any) => {
-                    e?.stopPropagation?.();
-                    if (!isProjected) togglePaid(t);
-                  }}
-                  disabled={isProjected}
-                  hitSlop={8}
-                  style={[
-                    styles.paidBox,
-                    isProjected
-                      ? { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }
-                      : isPaid
-                      ? { backgroundColor: theme.colors.income, borderColor: theme.colors.income }
-                      : { borderColor: theme.colors.textMuted },
-                  ]}
-                >
-                  {isProjected ? (
+                {/* Left indicator — checkbox for expenses, receive-arrow badge for income, clock for projected */}
+                {isProjected ? (
+                  <View
+                    style={[
+                      styles.paidBox,
+                      { borderColor: theme.colors.border, backgroundColor: theme.colors.surface },
+                    ]}
+                  >
                     <Ionicons name="time-outline" size={12} color={theme.colors.textMuted} />
-                  ) : isPaid ? (
-                    <Ionicons name="checkmark" size={14} color={theme.colors.textInverse} />
-                  ) : null}
-                </TouchableOpacity>
+                  </View>
+                ) : isIncome ? (
+                  <View
+                    style={[
+                      styles.paidBox,
+                      { backgroundColor: theme.colors.income + "22", borderColor: theme.colors.income + "55" },
+                    ]}
+                  >
+                    <Ionicons name="arrow-down" size={12} color={theme.colors.income} />
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    testID={`tx-paid-toggle-${t.id}`}
+                    onPress={(e: any) => {
+                      e?.stopPropagation?.();
+                      togglePaid(t);
+                    }}
+                    hitSlop={8}
+                    style={[
+                      styles.paidBox,
+                      isPaid
+                        ? { backgroundColor: theme.colors.income, borderColor: theme.colors.income }
+                        : { borderColor: theme.colors.textMuted },
+                    ]}
+                  >
+                    {isPaid ? <Ionicons name="checkmark" size={14} color={theme.colors.textInverse} /> : null}
+                  </TouchableOpacity>
+                )}
 
                 <View style={[styles.txIcon, { backgroundColor: (cat?.color || theme.colors.primary) + "22" }]}>
                   <Ionicons name={(cat?.icon as any) || "ellipse"} size={16} color={cat?.color || theme.colors.primary} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.txTitle, !isPaid && !isProjected && styles.txTitleUnpaid]} numberOfLines={1}>
+                  <Text style={[styles.txTitle, !isPaid && !isProjected && !isIncome && styles.txTitleUnpaid]} numberOfLines={1}>
                     {t.description || cat?.name || t.category}
                   </Text>
                   <View style={styles.txMetaRow}>
@@ -400,7 +475,7 @@ export default function Dashboard() {
                       <View style={styles.upcomingPill} testID={`tx-upcoming-${t.id}`}>
                         <Text style={styles.upcomingPillText}>Upcoming</Text>
                       </View>
-                    ) : !isPaid ? (
+                    ) : !isPaid && !isIncome ? (
                       <View style={styles.unpaidPill}>
                         <Text style={styles.unpaidPillText}>Unpaid</Text>
                       </View>
@@ -438,7 +513,7 @@ export default function Dashboard() {
                         testID={`tx-delete-${t.id}`}
                         onPress={(e: any) => {
                           e?.stopPropagation?.();
-                          onDelete(t.id);
+                          onDelete(t);
                         }}
                         hitSlop={6}
                         style={styles.miniBtn}

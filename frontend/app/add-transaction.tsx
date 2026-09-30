@@ -49,8 +49,13 @@ export default function AddTransaction() {
     type?: string;
     date?: string;
     paid?: string;
+    recurring_rule_id?: string;
+    scope?: string; // "one" (default) or "all" — used when editing a recurring transaction
   }>();
   const isEdit = !!params.id;
+  const scope: "one" | "all" = params.scope === "all" ? "all" : "one";
+  const recurringId = params.recurring_rule_id || "";
+  const editingSeries = isEdit && scope === "all" && !!recurringId;
 
   const [type, setType] = useState<"expense" | "income">(
     (params.type as "expense" | "income") || "expense"
@@ -145,7 +150,18 @@ export default function AddTransaction() {
         paid: paidFlag,
       };
       if (isEdit) {
-        await api.put(`/transactions/${params.id}`, payload);
+        if (editingSeries) {
+          // "Apply to entire series" — update the recurring rule template and
+          // cascade to every already-materialized transaction.
+          await api.put(`/recurring/${recurringId}`, {
+            amount: amt,
+            type,
+            category,
+            description: description.trim(),
+          });
+        } else {
+          await api.put(`/transactions/${params.id}`, payload);
+        }
       } else if (frequency === "once") {
         await api.post("/transactions", payload);
       } else {
@@ -207,7 +223,7 @@ export default function AddTransaction() {
             <Ionicons name="close" size={22} color={theme.colors.text} />
           </TouchableOpacity>
           <Text style={styles.headerTitle} testID="tx-header-title">
-            {isEdit ? "Edit transaction" : "New transaction"}
+            {editingSeries ? "Edit series" : isEdit ? "Edit transaction" : "New transaction"}
           </Text>
           {isEdit ? (
             <TouchableOpacity testID="delete-tx-btn" onPress={onDelete} style={[styles.closeBtn, { backgroundColor: theme.colors.expense + "18" }]}>
@@ -219,6 +235,14 @@ export default function AddTransaction() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          {editingSeries ? (
+            <View style={styles.seriesBanner} testID="editing-series-banner">
+              <Ionicons name="repeat" size={16} color={theme.colors.primary} />
+              <Text style={styles.seriesBannerText}>
+                Editing the entire recurring series — changes apply to every transaction in this series.
+              </Text>
+            </View>
+          ) : null}
           {/* Type toggle */}
           <View style={styles.typeToggle}>
             {(["expense", "income"] as const).map((t) => (
@@ -317,9 +341,13 @@ export default function AddTransaction() {
             ))}
           </View>
 
-          {/* Date */}
-          <Text style={styles.label}>Date</Text>
-          <DatePicker testID="date-picker" value={date} onChange={(v) => v && setDate(v)} />
+          {/* Date — hidden when editing a series (individual dates don't apply to the template) */}
+          {!editingSeries ? (
+            <>
+              <Text style={styles.label}>Date</Text>
+              <DatePicker testID="date-picker" value={date} onChange={(v) => v && setDate(v)} />
+            </>
+          ) : null}
 
           {/* Frequency picker — hidden in edit mode */}
           {!isEdit ? (
@@ -409,6 +437,14 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   scroll: { padding: theme.spacing.lg, paddingBottom: 48 },
+  seriesBanner: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    padding: 12, marginBottom: theme.spacing.md,
+    backgroundColor: theme.colors.primaryLight,
+    borderRadius: theme.radius.md,
+    borderWidth: 1, borderColor: theme.colors.primary + "33",
+  },
+  seriesBannerText: { flex: 1, fontSize: 12, color: theme.colors.primary, fontWeight: "600", lineHeight: 17 },
   typeToggle: {
     flexDirection: "row", gap: 10, padding: 6,
     backgroundColor: theme.colors.surface, borderRadius: theme.radius.pill,
