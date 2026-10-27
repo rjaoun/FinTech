@@ -184,6 +184,35 @@ class CategorySuggestIn(BaseModel):
     description: str
     amount: Optional[float] = None
 
+
+# ---------- CREDIT CARDS ----------
+class CreditCardIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    balance: float = Field(ge=0)
+    credit_limit: Optional[float] = Field(default=None, ge=0)
+    apr: float = Field(ge=0, le=100)  # annual percentage rate %
+    statement_day: int = Field(ge=1, le=28)  # day of month the statement closes
+    min_payment_percent: float = Field(default=2.0, ge=0, le=100)
+    min_payment_floor: float = Field(default=25.0, ge=0)
+    color: Optional[str] = None  # hex e.g. "#1E3F32"
+
+
+class CreditCardUpdate(BaseModel):
+    name: Optional[str] = None
+    balance: Optional[float] = None
+    credit_limit: Optional[float] = None
+    apr: Optional[float] = None
+    statement_day: Optional[int] = None
+    min_payment_percent: Optional[float] = None
+    min_payment_floor: Optional[float] = None
+    color: Optional[str] = None
+
+
+class CreditCardOut(CreditCardIn):
+    id: str
+    user_id: str
+    created_at: str
+
 # ---------- AUTH ENDPOINTS ----------
 @api_router.post("/auth/register", response_model=AuthResponse)
 async def register(body: RegisterBody):
@@ -1068,6 +1097,62 @@ Pick the best-matching category id."""
     except Exception as e:
         logging.exception("AI category suggest failed")
         return {"category": "other_exp", "confidence": 0.0, "error": str(e)}
+
+# ---------- CREDIT CARDS (CRUD) ----------
+@api_router.post("/credit-cards", response_model=CreditCardOut)
+async def create_credit_card(body: CreditCardIn, user: dict = Depends(get_current_user)):
+    cid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": cid,
+        "user_id": user["id"],
+        "name": body.name.strip(),
+        "balance": float(body.balance),
+        "credit_limit": float(body.credit_limit) if body.credit_limit is not None else None,
+        "apr": float(body.apr),
+        "statement_day": int(body.statement_day),
+        "min_payment_percent": float(body.min_payment_percent),
+        "min_payment_floor": float(body.min_payment_floor),
+        "color": body.color,
+        "created_at": now,
+    }
+    await db.credit_cards.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/credit-cards", response_model=List[CreditCardOut])
+async def list_credit_cards(user: dict = Depends(get_current_user)):
+    return await db.credit_cards.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(length=200)
+
+
+@api_router.put("/credit-cards/{cid}", response_model=CreditCardOut)
+async def update_credit_card(cid: str, body: CreditCardUpdate, user: dict = Depends(get_current_user)):
+    update = {k: v for k, v in body.dict().items() if v is not None}
+    if "name" in update:
+        update["name"] = update["name"].strip()
+        if not update["name"]:
+            raise HTTPException(status_code=400, detail="name cannot be empty")
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    res = await db.credit_cards.find_one_and_update(
+        {"id": cid, "user_id": user["id"]},
+        {"$set": update},
+        return_document=True,
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Credit card not found")
+    res.pop("_id", None)
+    return res
+
+
+@api_router.delete("/credit-cards/{cid}")
+async def delete_credit_card(cid: str, user: dict = Depends(get_current_user)):
+    res = await db.credit_cards.delete_one({"id": cid, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Credit card not found")
+    return {"ok": True}
+
 
 # ---------- HEALTH ----------
 @api_router.get("/")

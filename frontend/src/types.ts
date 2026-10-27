@@ -83,3 +83,17 @@ export type AIInsight = {
   generated_at: string;
   fallback?: boolean;
 };
+
+export type CreditCard = {
+  id: string;
+  user_id: string;
+  name: string;
+  balance: number;
+  credit_limit: number | null;
+  apr: number;
+  statement_day: number;
+  min_payment_percent: number;
+  min_payment_floor: number;
+  color: string | null;
+  created_at: string;
+};

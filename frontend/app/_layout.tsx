@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from "../src/auth";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 import { theme } from "../src/theme";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ConfirmProvider } from "../src/components/ConfirmDialog";
 
 function RootGate() {
@@ -44,14 +45,16 @@ function RootGate() {
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <ConfirmProvider>
-          <StatusBar style="dark" />
-          <RootGate />
-        </ConfirmProvider>
-      </AuthProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <ConfirmProvider>
+            <StatusBar style="dark" />
+            <RootGate />
+          </ConfirmProvider>
+        </AuthProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 

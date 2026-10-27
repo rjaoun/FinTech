@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 13: swipe-to-delete, re-test of the Credit Cards stack tap routing, and AI Insights with newer data. Swipe-to-delete passes with touch input (CDP touch emulation): a left swipe moves the row by translateX(-92px) and shows a red #E5484D panel with a trash icon and 'Delete' (testID tx-delete-<id>). The old mini trash button is gone; only tx-edit-<id> remains. Non-recurring delete shows 'Delete transaction?'. Cancel keeps the row and closes the swipe; Delete removes the row in the UI and in the backend. Recurring delete shows 'Delete recurring transaction?' with 'Just this one', 'Delete entire series' and Cancel. Cancel keeps the row. 'Just this one' removes only that instance (2 of 3 remain, rule still exists). 'Entire series' removes all generated rows and the rule (checked via API). Projected 'Upcoming' rows (Nov 2026) do not swipe and have no delete action. Regressions pass: row tap opens edit, a recurring row tap shows the edit choice dialog, the paid toggle works optimistically, long-press opens the delete confirm, search and the Unpaid filter work, and rows are 8px apart. Credit Cards: the zIndex fix (idx+1) works. elementFromPoint gives a different card for each strip, and tapping each strip expands that card: 3/3 with 3 cards and 4/4 with 4 cards. Add, edit and delete (with confirm dialog) work through the UI. The Schedule modal works in Minimum mode (163 rows) and Custom mode ($300 gives 6 rows). The nested card testIDs flagged in iteration 12 are now present. AI Insights: POST /api/ai/insights returns 200 with no fallback and the Insights tab shows a real Claude summary, top categories and a working refresh. suggest-category works. One minor web-only issue: dragging with a mouse on desktop web opens the swipe AND opens the edit screen on mouse-up. Touch swipes do not have this problem. No deprecated Expo packages were found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/ai/insights", "issue": "Works without errors, but the prompt payload (server.py:1011-1020) only sends amount, type, category, description and date. The paid flag, recurring_rule_id/projected recurring items and credit-card balances/APR are not passed to the AI, so the insights ignore unpaid bills and card debt. Unpaid expenses are counted as spent. Product improvement, not a crash."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SwipeToDelete (web mouse drag)", "issue": "On desktop web, dragging a row left with a mouse opens the swipe panel, but the TouchableOpacity onPress also fires on mouse-up and goes to /add-transaction (edit). Touch swipes (mobile web and native) do not trigger onPress. Fix: in SwipeToDelete, set a ref flag in onSwipeableOpenStartDrag/onSwipeableWillOpen (or keep an isSwiping shared value) and ignore the row's onPress while dragging or open. Another option is to make tapping an open row close it instead of opening edit. Reference: /app/frontend/src/components/SwipeToDelete.tsx:22, /app/frontend/app/(tabs)/index.tsx:428", "testID": "tx-<id>", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard activity rows", "issues": ["Paid checkbox is 22x22 with hitSlop=8 (38pt effective) and the edit pencil is 24x24 with hitSlop=6 (36pt effective). Both are below the 44pt minimum. (/app/frontend/app/(tabs)/index.tsx:460,513)", "Several rows can be swiped open at the same time. Consider closing the previously open row when a new swipe starts (common iOS pattern)."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter13_swipe_delete_ai.py",
+    "/app/backend/tests/test_ai.py",
+    "/app/tests/seed_iter13.py",
+    "/app/test_reports/pytest/pytest_iter13.xml"
+  ],
+  "action_items": [
+    "(LOW) Stop row onPress from firing after a swipe drag on web: track the swipe state in SwipeToDelete (onSwipeableOpenStartDrag / onSwipeableWillOpen / onSwipeableClose) and skip goEdit while the row is dragging or open.",
+    "(LOW) Make the paid toggle and edit pencil tap targets at least 44pt (increase hitSlop to 11-12 or enlarge the wrappers).",
+    "(OPTIONAL) Add paid flag, recurring info and credit-card summary (balance, APR, min payment) to the /api/ai/insights prompt so insights reflect the newer data model."
+  ],
+  "critical_code_review_comments": [
+    "index.tsx onDelete: errors are swallowed silently (`catch {}`). If a delete fails, the user gets no feedback; add a toast or alert.",
+    "index.tsx 'Delete entire series' calls DELETE /recurring/{rid}?delete_generated=true, which also deletes past paid history for the series. This matches the label, but the dialog copy could warn that past entries are removed too.",
+    "cards.tsx (667 lines) and index.tsx (665 lines) are close to the 700-line split threshold.",
+    "Only pre-existing RN-web warnings in the console (shadow* deprecated, props.pointerEvents deprecated); no runtime errors."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter13_swipe_delete_ai.py (new)", "/app/tests/seed_iter13.py (new)"],
+  "success_rate": {"backend": "100% (12/12: 6 new iter13 + 6 test_ai)", "frontend": "~97% (all requested flows pass; 1 low-priority web mouse-drag issue)"},
+  "seed_data_creation": "Admin account was seeded with TEST_swipe_one, TEST_swipe_cancel, TEST_recA/TEST_recB weekly rules and TEST_Alpha/Bravo/Charlie cards (plus TEST_Delta via the UI). Everything was removed with `python /app/tests/seed_iter13.py clean`. test_iter13 also registers an isolated test_iter13_*@financefocus.app user each run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "To swipe on web, use CDP touch: page.context.new_cdp_session(page) -> Emulation.setTouchEmulationEnabled, then Input.dispatchTouchEvent touchStart / touchMove (about 30 steps of 5px left) / touchEnd. A mouse drag also swipes but fires the row onPress (known LOW issue). An open row has parent style transform translateX(-92px). Dialog testIDs: confirm-dialog-title/cancel/confirm, choice-dialog-one/series/cancel. The Cards stack tap routing is now correct (zIndex idx+1). The system date in this environment is Oct 2026. Backend env key: EXPO_PUBLIC_BACKEND_URL.",
+  "rca_of_issue": "Web mouse-drag issue: RNGH ReanimatedSwipeable activates its Pan gesture, but react-native-web's Pressability (TouchableOpacity) still gets the mouse click/up and calls onPress. On native and with touch input, RNGH cancels the JS responder when the pan activates, which is why touch swipes behave correctly."
+}

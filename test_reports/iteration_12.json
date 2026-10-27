@@ -1,0 +1,52 @@
+{
+  "summary": "FRONTEND RE-TEST of Credit Cards stacked carousel tap-target fix (iteration 12). PARTIAL PASS. Measurement passes: with 3 collapsed cards (COLLAPSED_PEEK=96, PEEK_VISIBLE=48, marginBottom=-48), each collapsed card presents exactly a 48px unobstructed visible strip (verified via getBoundingClientRect: tops at y=100, 148, 196). TAP-ROUTING BUG STILL PRESENT: tapping the MIDDLE card's visible strip does NOT expand that card. Using document.elementFromPoint over the full strip range, pixels y=110..190 ALL resolve to the first card (card-77062a43/Charlie) because Charlie has zIndex=3 and its full 96px hit box (y=100-196) blocks Bravo's 48px visible strip (y=148-196). Similarly, taps on Alpha's visible top half (y=196-244) resolve to Bravo (zIndex=2). Hit-test ownership measured: y=110,130,150,172,190 → Charlie; y=220,240 → Bravo; y=260,280 → Alpha. Expected: y=148-196 → Bravo; y=196-244 → Alpha. Click-and-expand verification: tap Charlie strip center (y=124) → Charlie expands ✓; tap Bravo strip center (y=172) → NO card expands (toggle noop or dispatched to Charlie then layout settled collapsed) ✗; tap Alpha strip center (y=244) → Alpha expands ✓. Overall 2/3 strip taps route correctly. RCA: `zIndex: cards.length - idx` at /app/frontend/app/(tabs)/cards.tsx:278 is INVERTED. idx=0 gets the HIGHEST zIndex=3 which makes the first (top) card's full 96px tap area override the visible strips of all cards below it. Correct ordering is `zIndex: idx + 1` so each later card (which visually overlays the previous card in the 48px overlap zone) also captures events on that overlay region. REGRESSION PASSES: CRUD (add TEST_Delta, edit TEST_Charlie→TEST_Charlie_Renamed, delete via API) all work; expanded card correctly uses zIndex:20 and sits on top; Schedule modal opens, Minimum/Custom toggle works, schedule-count=250 rows render; empty state unchanged; no LogBox red overlay; no new console errors beyond pre-existing shadow* / pointerEvents RN-web deprecation warnings.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Stacked carousel tap routing",
+        "issue": "Middle collapsed cards' visible strips do not route taps to themselves. `zIndex: cards.length - idx` makes earlier (visually-topmost) cards' full 96px hit area override later cards' 48px visible strips. elementFromPoint confirms y=172 (center of Bravo's visible strip) resolves to Charlie. Fix: change to `zIndex: idx + 1` (or `idx`) so each later-rendered card captures taps on its own visible overlap region. Reference: /app/frontend/app/(tabs)/cards.tsx:278",
+        "testID": "card-<id>",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Nested testIDs (pre-existing from iter 11)",
+        "issue": "card-min-<id>, card-schedule-<id>, card-edit-<id>, card-delete-<id> still not emitted as data-testid in react-native-web — only outer card-<id> wrapper is. Automation must fall back to visible-text selectors ('Schedule') or `[data-testid^=card-edit-]`. Not re-fixed per minimum-change directive. Reference: /app/frontend/app/(tabs)/cards.tsx:309,315,323,330",
+        "testID": "card-min-<id>, card-schedule-<id>, card-edit-<id>, card-delete-<id>",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Cards tab (stacked carousel)",
+        "issues": [
+          "Visible strip height (48px) now meets the 44pt tap-target minimum ✓, but event-capture area for the first card still extends 96px (the full card height), blocking the later cards' strips. The effective tap target for the FIRST card is 96px tall (OK), for the LAST card is 96px (OK, no overlapping sibling), but for every middle card the effective tap target is ZERO because its visible strip is entirely under the previous card's hit box."
+        ]
+      }
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_credit_cards.py (unchanged from iter 11)",
+    "/app/tests/test_cards_tap_target.py (stub — actual test executed via browser automation)"
+  ],
+  "action_items": [
+    "Invert the collapsed-card zIndex in /app/frontend/app/(tabs)/cards.tsx:278. Change `zIndex: cards.length - idx` to `zIndex: idx + 1` so later-rendered cards (which visually overlay earlier ones in the 48px overlap zone) also capture taps on that overlap region. Then: Charlie@zIndex=1 fills y=100-148 only (strip clear), Bravo@zIndex=2 covers y=148-244 (its strip y=148-196 is on top of Charlie's bottom half), Alpha@zIndex=3 covers y=196-292 (its strip y=196-244 is on top of Bravo's bottom half). Expanded card should keep zIndex:20 to float on top during animation.",
+    "After the zIndex inversion, re-run this iteration's tap-routing test (3 cards: tap each strip center via mouse.click, assert expanded card === tapped card)."
+  ],
+  "critical_code_review_comments": [
+    "cards.tsx line 278: `zIndex: cards.length - idx` is semantically backwards relative to the implicit DOM stacking that negative margins create. The implementer appears to have intended 'first card is topmost' but that is the DEFAULT behavior when earlier DOM siblings don't have higher zIndex; applying `cards.length - idx` INVERTS what the sibling-paint order would give and breaks hit-testing for middle cards.",
+    "cards.tsx still at 668 lines — approaching the 700-line split threshold flagged in iter 11."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (no backend changes this iteration — iter 11 suite still green: 19/19 credit-card tests)",
+    "frontend": "~70% — strip-size measurement PASS, expanded zIndex=20 PASS, 2/3 strip-tap routing FAIL (middle strip broken), CRUD + Schedule + no-LogBox regression PASS"
+  },
+  "seed_data_creation": "Created and cleaned up TEST_Alpha / TEST_Bravo / TEST_Charlie / TEST_Delta via /api/credit-cards. All TEST_* cards deleted at end of run.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The tap-target VISIBLE size is now correct (48px per collapsed card) — don't re-measure that. Focus on verifying the FIX of the zIndex direction. After main agent inverts `zIndex: cards.length - idx` → `zIndex: idx + 1`, use document.elementFromPoint(195, y) in-browser for y ∈ {120, 170, 220, 260} with 3 seeded cards and confirm each returns a DIFFERENT card id matching the DOM order. Admin creds: admin@financefocus.app / admin123. Backend URL env key is EXPO_PUBLIC_BACKEND_URL.",
+  "rca_of_issue": "The stacked carousel renders N TouchableOpacity cards each with height=96 and marginBottom=-48, creating a 48px visual overlap between adjacent cards. The code sets `zIndex: cards.length - idx` on collapsed cards, giving the first (idx=0) card zIndex=N and the last card zIndex=1. CSS hit-testing uses zIndex: higher zIndex captures pointer events in overlapping regions. Because idx=0 has the HIGHEST zIndex, the first card's full 96px bounding box (y=100-196 for the first card) captures all pointer events in that range — including the 48px (y=148-196) that is Bravo's intended visible-tap-strip. The same cascade continues: Bravo (zIndex=N-1) blocks Alpha's top half. Only the last card's unoccluded bottom half (y=244-292 for Alpha) and the first card's top portion (not overlapped by anything) accept correctly-routed taps. Reproduction: seed 3 cards, go to Cards tab, run `document.elementFromPoint(195, 172)` in dev console — returns first card instead of middle card. Mitigation: invert the ordering to `zIndex: idx + 1` so later DOM cards sit on top in overlap zones, matching the user's visual intent (each visible strip belongs to its own card)."
+}

@@ -18,6 +18,7 @@ import { useAuth } from "../../src/auth";
 import { DashboardSummary, Category, Transaction } from "../../src/types";
 import { useConfirm, useChoice } from "../../src/components/ConfirmDialog";
 import { refreshBus } from "../../src/refresh-bus";
+import SwipeToDelete from "../../src/components/SwipeToDelete";
 
 const MONTH_NAMES_FULL = [
   "January", "February", "March", "April", "May", "June",
@@ -416,11 +417,17 @@ export default function Dashboard() {
             const isIncome = t.type === "income";
             const isPaid = !isProjected && t.paid !== false;
             return (
-              <TouchableOpacity
+              <SwipeToDelete
                 key={t.id}
+                enabled={!isProjected}
+                testID={`tx-delete-${t.id}`}
+                onDelete={() => onDelete(t)}
+              >
+              {(guard) => (
+              <TouchableOpacity
                 testID={`tx-${t.id}`}
-                onPress={() => !isProjected && goEdit(t)}
-                onLongPress={() => !isProjected && onDelete(t)}
+                onPress={() => !isProjected && guard(() => goEdit(t))}
+                onLongPress={() => !isProjected && guard(() => onDelete(t))}
                 disabled={isProjected}
                 activeOpacity={isProjected ? 1 : 0.6}
                 style={[styles.txRow, !isPaid && !isProjected && !isIncome && styles.txRowUnpaid, isProjected && styles.txRowProjected]}
@@ -449,9 +456,9 @@ export default function Dashboard() {
                     testID={`tx-paid-toggle-${t.id}`}
                     onPress={(e: any) => {
                       e?.stopPropagation?.();
-                      togglePaid(t);
+                      guard(() => togglePaid(t));
                     }}
-                    hitSlop={8}
+                    hitSlop={11}
                     style={[
                       styles.paidBox,
                       isPaid
@@ -502,23 +509,12 @@ export default function Dashboard() {
                         testID={`tx-edit-${t.id}`}
                         onPress={(e: any) => {
                           e?.stopPropagation?.();
-                          goEdit(t);
+                          guard(() => goEdit(t));
                         }}
-                        hitSlop={6}
+                        hitSlop={10}
                         style={styles.miniBtn}
                       >
                         <Ionicons name="pencil" size={13} color={theme.colors.primary} />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        testID={`tx-delete-${t.id}`}
-                        onPress={(e: any) => {
-                          e?.stopPropagation?.();
-                          onDelete(t);
-                        }}
-                        hitSlop={6}
-                        style={styles.miniBtn}
-                      >
-                        <Ionicons name="trash-outline" size={13} color={theme.colors.expense} />
                       </TouchableOpacity>
                     </View>
                   ) : (
@@ -526,6 +522,8 @@ export default function Dashboard() {
                   )}
                 </View>
               </TouchableOpacity>
+              )}
+              </SwipeToDelete>
             );
           })
         )}
@@ -626,7 +624,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 10,
     paddingVertical: 10, paddingHorizontal: 12,
     backgroundColor: theme.colors.surfaceElevated,
-    borderRadius: theme.radius.lg, marginBottom: 8,
+    borderRadius: theme.radius.lg,
     borderWidth: 1, borderColor: theme.colors.border,
   },
   txRowUnpaid: { backgroundColor: theme.colors.accentSand + "18", borderColor: theme.colors.accentSand + "60" },

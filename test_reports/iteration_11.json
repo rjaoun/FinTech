@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 11 (Credit Cards tab + 4 new CRUD endpoints) verified end-to-end. Backend: new /app/backend/tests/test_credit_cards.py — 19/19 tests pass (auth, CRUD happy-path with Create→GET persistence, PUT partial, empty-body→400, missing→404, validation (apr 0..100, statement_day 1..28, balance >=0, min_payment_percent 0..100, min_payment_floor >=0), user isolation). Regression suite: 130/134 pass; the 4 failing tests (test_calendar projection x2, test_datepicker_enddate active-flag, test_race_condition MONGO_URL) are pre-existing and documented in iteration_10 — unrelated to this iteration. Frontend: Cards tab visible between Insights and Goals (testID tab-cards). add-card-btn opens modal; name/balance/limit/apr/statement_day fields work and POST /api/credit-cards persists. Vertical stacked carousel confirmed — all collapsed cards are 72px tall at consecutive y-offsets (100,124,148,172) and tapping one expands it to 196px while others stay collapsed (verified via live bounding-rect measurement). Schedule modal opens, shows Minimum/Custom toggle, summary cells (Payments/Total paid/Interest), scrollable table (schedule-row-N testIDs rendered correctly), warning banner fires when custom payment ($1) doesn't cover monthly interest, and a very large custom payment ($99999 on $2500 balance) collapses the schedule to 1 payment with one month's interest ($47.90) as expected. No LogBox red overlay observed. KNOWN FRONTEND BUG DISCOVERED: nested testID props on the expanded card's action buttons (card-min-<id>, card-schedule-<id>, card-edit-<id>, card-delete-<id>) are NOT rendered as data-testid in react-native-web — only the outer TouchableOpacity's card-<id> testID is emitted. The buttons still function (clickable via visible text) but testID-based automation of per-card edit/schedule/delete is broken. Confirmed by DOM enumeration: only `card-<uuid>` appears, no nested suffixed testIDs. Likely cause: react-native-web collapses testID through nested Touchable components in some configurations. Additionally the card tap target in the stack is only ~24px of unobscured height per collapsed card, below the 44pt minimum touch-target guideline — tapping the visible top strip of one card can sometimes trigger a neighboring card due to z-order overlap.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "cards.tsx action buttons", "issue": "Nested testID props on card action buttons are not emitted as data-testid in react-native-web. Only the outer TouchableOpacity's testID (`card-<id>`) is rendered. Breaks automation for per-card Schedule/Edit/Delete and MIN PAYMENT value readback. Reference: /app/frontend/app/(tabs)/cards.tsx:306-332", "testID": "card-min-<id>, card-schedule-<id>, card-edit-<id>, card-delete-<id>", "priority": "MEDIUM"},
+      {"component": "stacked carousel tap target", "issue": "Collapsed cards occupy only ~24px of unobstructed vertical space (height 72, marginBottom -48) which is far below the 44pt touch-target minimum. Due to DOM z-stacking (later siblings on top), tapping on what visually looks like one card's peek region can hit a different card. Reference: /app/frontend/app/(tabs)/cards.tsx:275", "testID": "card-<id>", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Cards tab", "issues": ["Collapsed card peek visible area (~24px) is below iOS 44pt / Android 48dp touch-target minimum.", "Consider adding explicit zIndex per card based on expand state so the expanded card sits on top and taps on peek strips route reliably to the intended card."]}
+    ],
+    "react_native_issues": [
+      {"component": "cards.tsx (TouchableOpacity nested testID)", "issue": "React Native Web does not render testID on inner TouchableOpacity when the ancestor TouchableOpacity also has testID. Only the first testID in the chain survives. Reference: /app/frontend/app/(tabs)/cards.tsx:311,320,326"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_credit_cards.py",
+    "/app/test_reports/pytest/pytest_credit_cards.xml",
+    "/app/test_reports/pytest/pytest_iteration11_full.xml"
+  ],
+  "action_items": [
+    "Investigate why nested testIDs (card-min-<id>, card-schedule-<id>, card-edit-<id>, card-delete-<id>) do not propagate to data-testid in react-native-web. Options: (a) wrap each inner Touchable in a plain View with the testID applied there, or (b) move the testID onto the `<Text>` child that we currently rely on, or (c) use accessibilityLabel in addition so testing agents can target by text/accessibility name. Suggested quick fix: add a wrapping `<View testID=\"card-schedule-<id>\">` around each inner TouchableOpacity.",
+    "Fix tap target reliability for the stacked carousel: give the EXPANDED card an explicit zIndex (e.g. zIndex=10) and give each collapsed card an incrementing zIndex so the visible peek strip always routes taps to the intended card. Also consider raising the per-card visible strip to >=44px (e.g. COLLAPSED_PEEK=96 with marginBottom=-48)."
+  ],
+  "critical_code_review_comments": [
+    "cards.tsx is 665 lines — approaching the 700-line split threshold; the schedule modal + buildSchedule could be extracted to /app/frontend/src/components/cards/ScheduleModal.tsx.",
+    "`load()` swallows all errors silently — any non-401 server error would leave the UI stuck on an empty list with no toast. Consider surfacing a small error state like other tabs do.",
+    "`openSchedule` default custom amount `Math.ceil(calcMinPayment(c) * 2)` is nice, but when balance is 0 it defaults to 0 and the Custom mode would then be unusable with a $0 default — minor edge case."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_credit_cards.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19 credit-card tests, 149/153 overall including 4 pre-existing unrelated failures)",
+    "frontend": "~85% — core flows (tab visible, add, carousel stacking, schedule min/custom, warning banner, 1-month payoff, delete via API) all verified; nested-testID bug and tap-target overlap are blockers for full automated UI coverage of inline buttons"
+  },
+  "seed_data_creation": "None persisted — all TEST_* and UI Test * cards created during the run were deleted at teardown.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend credit-card CRUD is fully covered by /app/backend/tests/test_credit_cards.py — reuse it. The frontend has a react-native-web nested-testID issue; until fixed, automate per-card actions by (a) tapping the exact `card-<uuid>` wrapper to expand, then (b) clicking the inner buttons via visible text ('Schedule') or via pencil/trash Ionicon selectors. Admin login works at /api/auth/login with admin@financefocus.app / admin123. The stacked carousel also has a tap-routing issue where z-ordering makes peek-strip taps unreliable."
+}
