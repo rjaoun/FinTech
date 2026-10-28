@@ -73,6 +73,12 @@ function buildSchedule(card: CreditCard, mode: "minimum" | "custom", customAmoun
   return { rows, totalPaid, totalInterest, warning };
 }
 
+function paymentForMonths(card: CreditCard, months: number): number {
+  const r = card.apr / 100 / 12;
+  const p = r === 0 ? card.balance / months : (card.balance * r) / (1 - Math.pow(1 + r, -months));
+  return Math.ceil(p * 100) / 100; // round up to the cent so it finishes within `months`
+}
+
 export default function CardsTab() {
   const { user } = useAuth();
   const confirm = useConfirm();
@@ -97,6 +103,8 @@ export default function CardsTab() {
   const [scheduleCard, setScheduleCard] = useState<CreditCard | null>(null);
   const [scheduleMode, setScheduleMode] = useState<"minimum" | "custom">("minimum");
   const [customAmountInput, setCustomAmountInput] = useState("");
+  const [customBy, setCustomBy] = useState<"amount" | "months">("amount");
+  const [monthsInput, setMonthsInput] = useState("12");
 
   const currency = user?.currency || "USD";
 
@@ -211,15 +219,21 @@ export default function CardsTab() {
 
   const closeSchedule = () => setScheduleCard(null);
 
+  const monthsN = parseInt(monthsInput, 10);
+  const monthsPayment =
+    scheduleCard && customBy === "months" && monthsN > 0 && monthsN <= 600
+      ? paymentForMonths(scheduleCard, monthsN)
+      : 0;
+
   const scheduleResult = useMemo<ScheduleResult | null>(() => {
     if (!scheduleCard) return null;
-    const custom = parseFloat(customAmountInput);
+    const custom = customBy === "months" ? monthsPayment : parseFloat(customAmountInput);
     return buildSchedule(
       scheduleCard,
       scheduleMode,
       scheduleMode === "custom" ? (isNaN(custom) ? 0 : custom) : 0
     );
-  }, [scheduleCard, scheduleMode, customAmountInput]);
+  }, [scheduleCard, scheduleMode, customAmountInput, customBy, monthsPayment]);
 
   if (loading) {
     return (
@@ -421,15 +435,23 @@ export default function CardsTab() {
       </Modal>
 
       {/* ====== Schedule modal ====== */}
-      <Modal visible={!!scheduleCard} transparent animationType="slide" onRequestClose={closeSchedule}>
-        <View style={styles.modalWrap}>
-          <View style={[styles.modalCard, { maxHeight: "90%" }]}>
+      <Modal
+        visible={!!scheduleCard}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={closeSchedule}
+      >
+        <SafeAreaView style={styles.fullScreen} edges={["top", "bottom"]}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={styles.fullScreenInner}
+          >
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.overline}>PAYOFF SCHEDULE</Text>
                 <Text style={styles.modalTitle}>{scheduleCard?.name}</Text>
               </View>
-              <TouchableOpacity testID="close-schedule" onPress={closeSchedule}>
+              <TouchableOpacity testID="close-schedule" onPress={closeSchedule} style={styles.closeBtn} hitSlop={8}>
                 <Ionicons name="close" size={22} color={theme.colors.text} />
               </TouchableOpacity>
             </View>
@@ -452,18 +474,59 @@ export default function CardsTab() {
             </View>
 
             {scheduleMode === "custom" ? (
-              <View style={styles.customRow}>
-                <Text style={styles.customLabel}>Monthly payment</Text>
-                <TextInput
-                  testID="schedule-custom-amount"
-                  value={customAmountInput}
-                  onChangeText={setCustomAmountInput}
-                  keyboardType="decimal-pad"
-                  style={styles.customInput}
-                  placeholder="100"
-                  placeholderTextColor={theme.colors.textMuted}
-                />
-              </View>
+              <>
+                <View style={styles.subModeRow}>
+                  {(["amount", "months"] as const).map((k) => (
+                    <TouchableOpacity
+                      key={k}
+                      testID={`schedule-custom-by-${k}`}
+                      onPress={() => setCustomBy(k)}
+                      style={[styles.subModeBtn, customBy === k && styles.subModeBtnActive]}
+                    >
+                      <Text style={[styles.subModeText, customBy === k && styles.subModeTextActive]}>
+                        {k === "amount" ? "Monthly amount" : "Months to pay off"}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {customBy === "amount" ? (
+                  <View style={styles.customRow}>
+                    <Text style={styles.customLabel}>Monthly payment</Text>
+                    <TextInput
+                      testID="schedule-custom-amount"
+                      value={customAmountInput}
+                      onChangeText={setCustomAmountInput}
+                      keyboardType="decimal-pad"
+                      style={styles.customInput}
+                      placeholder="100"
+                      placeholderTextColor={theme.colors.textMuted}
+                    />
+                  </View>
+                ) : (
+                  <>
+                    <View style={styles.customRow}>
+                      <Text style={styles.customLabel}>Pay off in</Text>
+                      <TextInput
+                        testID="schedule-custom-months"
+                        value={monthsInput}
+                        onChangeText={(v) => setMonthsInput(v.replace(/[^0-9]/g, ""))}
+                        keyboardType="number-pad"
+                        style={styles.customInput}
+                        placeholder="12"
+                        placeholderTextColor={theme.colors.textMuted}
+                        maxLength={3}
+                      />
+                      <Text style={styles.customLabel}>months</Text>
+                    </View>
+                    <View style={styles.monthsResult} testID="schedule-months-payment">
+                      <Text style={styles.monthsResultLabel}>You need to pay</Text>
+                      <Text style={styles.monthsResultVal}>
+                        {monthsPayment > 0 ? `${formatCurrency(monthsPayment, currency)} / month` : "Enter 1–600 months"}
+                      </Text>
+                    </View>
+                  </>
+                )}
+              </>
             ) : null}
 
             {scheduleResult ? (
@@ -519,8 +582,8 @@ export default function CardsTab() {
                 </ScrollView>
               </>
             ) : null}
-          </View>
-        </View>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
@@ -657,7 +720,28 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: theme.colors.border,
   },
   th: { fontSize: 10, fontWeight: "700", color: theme.colors.textMuted, letterSpacing: 1 },
-  tableBody: { maxHeight: 320 },
+  tableBody: { flex: 1 },
+  fullScreen: { flex: 1, backgroundColor: theme.colors.bg },
+  fullScreenInner: { flex: 1, paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.md },
+  closeBtn: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.surface,
+    alignItems: "center", justifyContent: "center",
+  },
+  subModeRow: { flexDirection: "row", gap: 6, marginBottom: 10 },
+  subModeBtn: {
+    flex: 1, paddingVertical: 8, borderRadius: theme.radius.md, alignItems: "center",
+    borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated,
+  },
+  subModeBtnActive: { borderColor: theme.colors.primary, backgroundColor: theme.colors.primaryLight },
+  subModeText: { fontSize: 12, fontWeight: "700", color: theme.colors.textMuted },
+  subModeTextActive: { color: theme.colors.primary },
+  monthsResult: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    padding: 12, marginBottom: 10, borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.primaryLight,
+  },
+  monthsResultLabel: { fontSize: 12, fontWeight: "700", color: theme.colors.primary },
+  monthsResultVal: { fontSize: 16, fontWeight: "800", color: theme.colors.primary },
   tr: {
     flexDirection: "row", gap: 6, paddingVertical: 8, paddingHorizontal: 6,
     borderBottomWidth: 1, borderBottomColor: theme.colors.border + "80",
