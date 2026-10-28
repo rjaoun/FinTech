@@ -14,7 +14,7 @@ import {
   UIManager,
   Alert,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { theme, formatCurrency } from "../../src/theme";
@@ -82,6 +82,9 @@ function paymentForMonths(card: CreditCard, months: number): number {
 export default function CardsTab() {
   const { user } = useAuth();
   const confirm = useConfirm();
+  // Insets read from the root provider — SafeAreaView inside an iOS Modal reports 0,
+  // which pushed the close button under the notch/status bar.
+  const insets = useSafeAreaInsets();
   const [cards, setCards] = useState<CreditCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -215,6 +218,8 @@ export default function CardsTab() {
     setScheduleCard(c);
     setScheduleMode("minimum");
     setCustomAmountInput(String(Math.ceil(calcMinPayment(c) * 2))); // sensible default: 2× minimum
+    setCustomBy("amount");
+    setMonthsInput("12");
   };
 
   const closeSchedule = () => setScheduleCard(null);
@@ -328,6 +333,7 @@ export default function CardsTab() {
                           <TouchableOpacity
                             testID={`card-schedule-${c.id}`}
                             onPress={() => openSchedule(c)}
+                            hitSlop={10}
                             style={styles.cardActionBtn}
                           >
                             <Ionicons name="calculator-outline" size={14} color="#fff" />
@@ -336,6 +342,7 @@ export default function CardsTab() {
                           <TouchableOpacity
                             testID={`card-edit-${c.id}`}
                             onPress={() => openEdit(c)}
+                            hitSlop={8}
                             style={styles.cardMiniBtn}
                           >
                             <Ionicons name="pencil" size={14} color="#fff" />
@@ -343,6 +350,7 @@ export default function CardsTab() {
                           <TouchableOpacity
                             testID={`card-delete-${c.id}`}
                             onPress={() => onDelete(c)}
+                            hitSlop={8}
                             style={styles.cardMiniBtn}
                           >
                             <Ionicons name="trash-outline" size={14} color="#fff" />
@@ -397,13 +405,21 @@ export default function CardsTab() {
               <View style={styles.row2}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.label}>Min pay %</Text>
-                  <TextInput testID="card-min-pct" value={minPct} onChangeText={setMinPct} keyboardType="decimal-pad" placeholder="2" placeholderTextColor={theme.colors.textMuted} style={styles.input} />
+                  <TextInput testID="card-min-pct" value={minPct} onChangeText={setMinPct} selectTextOnFocus keyboardType="decimal-pad" placeholder="2" placeholderTextColor={theme.colors.textMuted} style={styles.input} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Min pay floor</Text>
-                  <TextInput testID="card-min-floor" value={minFloor} onChangeText={setMinFloor} keyboardType="decimal-pad" placeholder="25" placeholderTextColor={theme.colors.textMuted} style={styles.input} />
+                  <Text style={styles.label}>Lowest min ($)</Text>
+                  <TextInput testID="card-min-floor" value={minFloor} onChangeText={setMinFloor} selectTextOnFocus keyboardType="decimal-pad" placeholder="25" placeholderTextColor={theme.colors.textMuted} style={styles.input} />
                 </View>
               </View>
+              <Text style={styles.fieldHint}>
+                Minimum payment = the larger of balance × Min pay % or the Lowest min amount (never more than the balance).
+              </Text>
+              {parseFloat(balance) > 0 && parseFloat(minFloor) >= parseFloat(balance) ? (
+                <Text style={styles.fieldWarn} testID="card-min-floor-warning">
+                  Lowest min is at or above the balance, so the minimum payment will be the full balance. Did you mean a smaller amount?
+                </Text>
+              ) : null}
 
               <Text style={styles.label}>Color</Text>
               <View style={styles.palette}>
@@ -441,7 +457,12 @@ export default function CardsTab() {
         presentationStyle="fullScreen"
         onRequestClose={closeSchedule}
       >
-        <SafeAreaView style={styles.fullScreen} edges={["top", "bottom"]}>
+        <View
+          style={[
+            styles.fullScreen,
+            { paddingTop: Math.max(insets.top, 20) + 8, paddingBottom: Math.max(insets.bottom, 12) },
+          ]}
+        >
           <KeyboardAvoidingView
             behavior={Platform.OS === "ios" ? "padding" : undefined}
             style={styles.fullScreenInner}
@@ -582,8 +603,11 @@ export default function CardsTab() {
                 </ScrollView>
               </>
             ) : null}
+            <TouchableOpacity testID="close-schedule-bottom" onPress={closeSchedule} style={styles.bottomCloseBtn}>
+              <Text style={styles.bottomCloseText}>Close</Text>
+            </TouchableOpacity>
           </KeyboardAvoidingView>
-        </SafeAreaView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -722,6 +746,13 @@ const styles = StyleSheet.create({
   th: { fontSize: 10, fontWeight: "700", color: theme.colors.textMuted, letterSpacing: 1 },
   tableBody: { flex: 1 },
   fullScreen: { flex: 1, backgroundColor: theme.colors.bg },
+  fieldHint: { fontSize: 11, color: theme.colors.textMuted, marginTop: 6, lineHeight: 15 },
+  fieldWarn: { fontSize: 12, color: theme.colors.expense, marginTop: 6, fontWeight: "600", lineHeight: 16 },
+  bottomCloseBtn: {
+    marginTop: 10, paddingVertical: 14, alignItems: "center",
+    borderRadius: theme.radius.pill, backgroundColor: theme.colors.primary,
+  },
+  bottomCloseText: { color: theme.colors.textInverse, fontWeight: "700", fontSize: 15 },
   fullScreenInner: { flex: 1, paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.md },
   closeBtn: {
     width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.surface,

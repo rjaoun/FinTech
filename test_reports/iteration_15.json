@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 15 (frontend only, admin, 390x844 + 375x667): Credit card Schedule modal + min-payment fixes ALL PASS. I created TEST_SchedCard through the UI (2400, 20% APR, day 15, 2%, floor 25), edited it, tested it, then deleted it through the UI. Schedule modal: X (close-schedule, 40x40) sits at y=44 on web, where insets are 0 and the code falls back to 20+8 plus 16 inner padding. A real click on it closes the modal. The bottom Close (close-schedule-bottom, 342x45) also closes it and stays visible at the bottom after the table scrolls (y=787 at 844, y=610 at 667). Minimum mode: 304 payments. Custom amount defaults to 96 (2x min) and gives 33 payments; $500 gives 6; $30 shows the 'doesn't cover monthly interest' warning. Months mode with 24 gives $122.15/month and exactly 24 rows, with row 24 ending at $0.00 and no row 25. 0 months shows 'Enter 1–600 months'; 1 month gives $2,440.01. The table scrolls internally (scrollTop 352 of 744). Form: the label reads 'Lowest min ($)', the formula helper text shows, and selectTextOnFocus selects all text on a fresh focus ([0,2] / [0,6] / [0,1]). card-min-floor-warning appears when floor >= balance and hides at 25. Save and edit work. Min payment on the card is $48.00 for 2400/2%/25, and $2,400.00 when the floor was 252525. The user's bug repro was confirmed: when I clicked the already-focused floor field again and typed 25, '2525' became '252525'. Select-all only fires on a fresh focus, and the new warning now catches this case. No deprecated Expo packages and no react-native SafeAreaView imports.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Credit Cards (expanded card)", "issues": ["Touch targets under 44pt: card-schedule-{id} is 91x27, card-edit-{id} and card-delete-{id} are 28x28 (cards.tsx:662-672). Add hitSlop or increase the size."]},
+      {"screen": "Schedule modal (375px width)", "issues": ["In 'Months to pay off' mode the 'Pay off in' label wraps onto 2 lines at 375px width (customLabel in a row with flex:1 input). Minor."]},
+      {"screen": "Card editor", "issues": ["close-editor X has no padding/hitSlop (22px icon only), which is below the 44pt target (cards.tsx:375)."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["browser_automation scripts (inline): cards add/edit/warning, schedule modal close/minimum/custom/months, small viewport, delete cleanup"],
+  "action_items": [
+    "Optional: add hitSlop/min 44pt size to card-schedule, card-edit, card-delete and close-editor buttons.",
+    "Optional: openSchedule does not reset customBy/monthsInput, so the previous card's months mode/value carries over to the next card. Consider resetting them, or keep it if intentional.",
+    "Verify on a physical iPhone (Expo Go) that insets.top is non-zero in the fullScreen Modal. Web preview insets are 0, so only the 28px fallback could be tested here."
+  ],
+  "critical_code_review_comments": [
+    "cards.tsx is 777 lines (>700). Consider extracting the ScheduleModal and CardEditor into src/components.",
+    "selectTextOnFocus only fires on focus. If the field is already focused, typing still appends. The warning mitigates this; a server-side or save-time confirm when min_payment_floor >= balance would be stronger.",
+    "Delete errors are swallowed silently (onDelete catch {}). Show an alert."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100%"},
+  "seed_data_creation": "Created TEST_SchedCard via UI and deleted it via UI afterwards. Admin had NO other cards in this environment ('Scotia bank amex'/'Neo' not present for admin@financefocus.app).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Cards tab testIDs: add-card-btn, card-{id}, card-schedule-{id}, card-edit-{id}, card-delete-{id}, card-min-{id}, card-name/balance/apr/statement-day/min-pct/min-floor, save-card, card-min-floor-warning, close-schedule, close-schedule-bottom, schedule-mode-minimum/custom, schedule-custom-by-amount/months, schedule-custom-amount, schedule-custom-months, schedule-months-payment, schedule-count, schedule-row-{n}, schedule-table. Delete confirm dialog has a 'Delete' text button.",
+  "rca_of_issue": "Bug 2 (min = full amount): floor field prefilled with '25'. When typing into it without select-all, the value becomes '2525' (reproduced: '2525' + '25' -> '252525'), and min(balance, max(pct, floor)) = balance. Mitigated by selectTextOnFocus plus the red warning. Bug 1: the X now gets root safe-area insets padding plus a bottom Close button; both close the modal on web."
+}
