@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 14: verified upcoming (projected) recurring rows are now editable/deletable and swipe-right paid toggle works. Backend: tests/test_iter14_upcoming_skip_override.py 14/14 PASS (skip, occurrence override, 404 bad/foreign rid, 422 missing body, 401 unauth, materialize_due respects exceptions, PUT series cascade, tx CRUD/paid). Frontend (375x667, admin): ALL requested flows PASS end-to-end incl. mouse-drag swipe and CDP touch-emulated swipe. Upcoming expense tap -> 'Edit recurring transaction?' -> 'Only this transaction' prefilled -> save -> row became a real row with edited amount/description (POST /occurrence). Upcoming income (Bonus) same. 'Update entire series' -> series banner shown, PUT applied to projection + materialized rows. Swipe-left on upcoming expense and upcoming income -> red Delete -> 'Delete recurring transaction?' -> 'Just this one' -> row gone (skip). 'Delete entire series' on upcoming row removed that series. Pencil on upcoming row works; header trash in add-transaction for an upcoming occurrence skips it. Real income: tap edit (44->46 saved), swipe-left delete OK. Real expense swipe right toggled paid->unpaid->paid (mouse) and paid->unpaid (touch), row closes. Swipe right on upcoming expense created a real paid tx. Income rows (real + upcoming) do not swipe right. Regression OK: non-recurring delete confirm, recurring real 'Just this one', filters All/Paid/Unpaid, balance card totals update. No deprecated Expo packages found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/recurring/{rid}/occurrence", "issue": "original_date gets added to exceptions BEFORE insert_one. If the insert fails (409 duplicate), the exception stays, so the projected copy is hidden but no real transaction exists. Add the exception only after a successful insert, or roll it back in the except block (server.py ~1002-1008)."},
+      {"endpoint": "POST /api/recurring/{rid}/skip", "issue": "Accepts any date string without checking it is a real occurrence of the rule. Low risk, but the exceptions list can fill up with junk."},
+      {"endpoint": "PUT /api/recurring/{rid}", "issue": "Updating the whole series runs update_many over every transaction in the series. This overwrites single-occurrence overrides: Nov Bonus edited to 75 went back to 60. Decide whether 'Update entire series' should leave individually edited occurrences alone."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Dashboard upcoming edit 'Only this transaction'", "issue": "The projected row is built with paid:true (index.tsx:93), so goEdit passes paid='1'. An edited future bill is saved as PAID (TEST_UIRent_edited came back paid=True with a green check). A future expense edited ahead of time should probably default to unpaid unless the user marks it paid.", "testID": "tx-proj-*", "priority": "MEDIUM"},
+      {"component": "Activity count pill", "issue": "'N upcoming' pill adds real unpaid expenses to the projected rows (index.tsx:162-165). In October it showed '1 upcoming' when there was only a real unpaid expense and no projected rows. Change the label to 'unpaid' or count them separately.", "testID": "", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter14_upcoming_skip_override.py", "/app/backend/tests/seed_iter14_ui.py", "/app/test_reports/pytest/pytest_iter14.xml"],
+  "action_items": [
+    "Default paid=false (for expenses) when saving an edited upcoming occurrence via 'Only this transaction', or show the paid state on the edit form.",
+    "In override_occurrence, add the exception only after the insert succeeds (or roll it back on 409).",
+    "Decide whether PUT /recurring/{rid} should skip transactions that were individually overridden.",
+    "Rename or split the 'N upcoming' count pill, since it also counts real unpaid expenses.",
+    "Tell the user that both features work in the current bundle. Their report probably came from an older bundle, so they should reload the app or Expo Go."
+  ],
+  "critical_code_review_comments": [
+    "Edited-occurrence dates are saved without a timezone (e.g. '2026-11-10T14:53:46' from toIsoWithNowTime), while rule-generated dates carry '+00:00'. This mixed format already existed but can affect string sorting and month-boundary comparisons.",
+    "test_user_profile.py renames the shared admin account to 'TEST_Updated_Name' and never restores it. The dashboard greeting showed 'TEST_Updated_Name.' I restored it to 'Admin' via PATCH /api/users/me; that test should restore the name in teardown or use its own user."
+  ],
+  "updated_files": ["/app/backend/tests/seed_iter14_ui.py (new: seed/cleanup helper for UI tests)"],
+  "success_rate": {"backend": "100%", "frontend": "100% of requested flows"},
+  "seed_data_creation": "Created TEST_UI* recurring rules + transactions on admin via seed_iter14_ui.py; all cleaned up (python tests/seed_iter14_ui.py cleanup). Admin name restored to 'Admin'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Server date is ~Oct 2026. Upcoming row testIDs: tx-proj-{rid}-{ISO date}, delete: tx-delete-proj-..., edit: tx-edit-proj-..., paid panel tx-swipe-paid-{id}. Mouse-drag swipe (180px in 10 steps, 16ms) works; touch swipe works only after CDP Emulation.setTouchEmulationEnabled. Seed helper: EXPO_PUBLIC_BACKEND_URL=... python /app/backend/tests/seed_iter14_ui.py [cleanup]."
+}

@@ -164,8 +164,24 @@ export default function Dashboard() {
       (t) => txMonth(t) === month && t.type === "expense" && t.paid === false
     ).length + projected.filter((t) => txMonth(t) === month).length;
 
-  const togglePaid = async (t: Transaction) => {
+  const togglePaid = async (t: Transaction & { projected?: boolean }) => {
     if (t.type !== "expense") return; // paid state only applies to expenses
+    if (t.projected) {
+      // Paying an upcoming bill early: save this occurrence now as a paid transaction.
+      try {
+        await api.post(`/recurring/${t.recurring_rule_id}/occurrence`, {
+          amount: t.amount,
+          type: t.type,
+          category: t.category,
+          description: t.description || "",
+          date: t.date,
+          paid: true,
+          original_date: t.date,
+        });
+        load();
+      } catch {}
+      return;
+    }
     const newPaid = !(t.paid !== false);
     // Optimistic update
     setAllTx((prev) => prev.map((x) => (x.id === t.id ? { ...x, paid: newPaid } : x)));
@@ -179,7 +195,7 @@ export default function Dashboard() {
     }
   };
 
-  const onDelete = async (t: Transaction) => {
+  const onDelete = async (t: Transaction & { projected?: boolean }) => {
     // Recurring rows: ask whether to delete just this occurrence or the entire series.
     if (t.recurring_rule_id) {
       const pick = await choose({
@@ -201,6 +217,9 @@ export default function Dashboard() {
           setAllTx((prev) =>
             prev.filter((x) => x.recurring_rule_id !== t.recurring_rule_id)
           );
+        } else if (t.projected) {
+          // Upcoming occurrence that doesn't exist yet: skip just that date.
+          await api.post(`/recurring/${t.recurring_rule_id}/skip`, { date: t.date });
         } else {
           await api.delete(`/transactions/${t.id}`);
           setAllTx((prev) => prev.filter((x) => x.id !== t.id));
@@ -224,7 +243,7 @@ export default function Dashboard() {
     } catch {}
   };
 
-  const goEdit = async (t: Transaction) => {
+  const goEdit = async (t: Transaction & { projected?: boolean }) => {
     let scope: "one" | "all" = "one";
     if (t.recurring_rule_id) {
       const pick = await choose({
@@ -249,9 +268,10 @@ export default function Dashboard() {
         category: t.category,
         type: t.type,
         date: t.date,
-        paid: t.paid === false ? "0" : "1",
+        paid: t.projected || t.paid === false ? "0" : "1",
         recurring_rule_id: t.recurring_rule_id || "",
         scope,
+        projected: t.projected ? "1" : "0",
       },
     });
   };
@@ -413,7 +433,6 @@ export default function Dashboard() {
             return (
               <SwipeToDelete
                 key={t.id}
-                enabled={!isProjected}
                 testID={`tx-delete-${t.id}`}
                 onDelete={() => onDelete(t)}
                 onTogglePaid={!isIncome ? () => togglePaid(t) : undefined}
@@ -423,10 +442,9 @@ export default function Dashboard() {
               {(guard) => (
               <TouchableOpacity
                 testID={`tx-${t.id}`}
-                onPress={() => !isProjected && guard(() => goEdit(t))}
-                onLongPress={() => !isProjected && guard(() => onDelete(t))}
-                disabled={isProjected}
-                activeOpacity={isProjected ? 1 : 0.6}
+                onPress={() => guard(() => goEdit(t))}
+                onLongPress={() => guard(() => onDelete(t))}
+                activeOpacity={0.6}
                 style={[styles.txRow, !isPaid && !isProjected && !isIncome && styles.txRowUnpaid, isProjected && styles.txRowProjected]}
               >
                 {/* Left indicator — checkbox for expenses, receive-arrow badge for income, clock for projected */}
@@ -500,23 +518,22 @@ export default function Dashboard() {
                     {t.type === "income" ? "+" : "-"}
                     {formatCurrency(t.amount, currency)}
                   </Text>
-                  {!isProjected ? (
-                    <View style={styles.iconBtnRow}>
-                      <TouchableOpacity
-                        testID={`tx-edit-${t.id}`}
-                        onPress={(e: any) => {
-                          e?.stopPropagation?.();
-                          guard(() => goEdit(t));
-                        }}
-                        hitSlop={10}
-                        style={styles.miniBtn}
-                      >
-                        <Ionicons name="pencil" size={13} color={theme.colors.primary} />
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
+                  {isProjected ? (
                     <Text style={styles.projHintInline}>auto on {t.date.slice(5, 10)}</Text>
-                  )}
+                  ) : null}
+                  <View style={styles.iconBtnRow}>
+                    <TouchableOpacity
+                      testID={`tx-edit-${t.id}`}
+                      onPress={(e: any) => {
+                        e?.stopPropagation?.();
+                        guard(() => goEdit(t));
+                      }}
+                      hitSlop={10}
+                      style={styles.miniBtn}
+                    >
+                      <Ionicons name="pencil" size={13} color={theme.colors.primary} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </TouchableOpacity>
               )}

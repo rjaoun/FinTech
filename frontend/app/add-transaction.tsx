@@ -51,8 +51,10 @@ export default function AddTransaction() {
     paid?: string;
     recurring_rule_id?: string;
     scope?: string; // "one" (default) or "all" — used when editing a recurring transaction
+    projected?: string; // "1" when editing an upcoming occurrence that isn't saved yet
   }>();
   const isEdit = !!params.id;
+  const isProjected = params.projected === "1";
   const scope: "one" | "all" = params.scope === "all" ? "all" : "one";
   const recurringId = params.recurring_rule_id || "";
   const editingSeries = isEdit && scope === "all" && !!recurringId;
@@ -159,6 +161,12 @@ export default function AddTransaction() {
             category,
             description: description.trim(),
           });
+        } else if (isProjected) {
+          // Upcoming occurrence: save an edited copy for this date only.
+          await api.post(`/recurring/${recurringId}/occurrence`, {
+            ...payload,
+            original_date: params.date,
+          });
         } else {
           await api.put(`/transactions/${params.id}`, payload);
         }
@@ -206,7 +214,11 @@ export default function AddTransaction() {
     });
     if (!ok) return;
     try {
-      await api.delete(`/transactions/${params.id}`);
+      if (isProjected) {
+        await api.post(`/recurring/${recurringId}/skip`, { date: params.date });
+      } else {
+        await api.delete(`/transactions/${params.id}`);
+      }
       refreshBus.flags.transactionsNeedReset = true;
       if (router.canGoBack()) router.back();
       else router.replace("/(tabs)");

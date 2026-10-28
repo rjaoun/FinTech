@@ -407,6 +407,11 @@ async def materialize_due(user_id: str) -> int:
             if end_dt and next_dt > end_dt:
                 break
             date_iso = next_dt.isoformat()
+            if date_iso in (rule.get("exceptions") or []):
+                # Occurrence was skipped or replaced by an edited one-off copy.
+                next_dt = _advance(next_dt, rule["frequency"])
+                safety += 1
+                continue
             doc = {
                 "id": str(uuid.uuid4()),
                 "user_id": user_id,
@@ -583,7 +588,7 @@ async def dashboard_summary(
             while next_dt < t_end and safety < 200:
                 if end_dt and next_dt > end_dt:
                     break
-                if next_dt >= t_start and next_dt > now:
+                if next_dt >= t_start and next_dt > now and next_dt.isoformat() not in (rule.get("exceptions") or []):
                     if rule["type"] == "income":
                         projected_income += float(rule["amount"])
                     else:
@@ -703,7 +708,7 @@ async def calendar_events(
             if end_dt and next_dt > end_dt:
                 break
             # Skip past dates; materialize_due already handled them.
-            if next_dt >= start and next_dt > now:
+            if next_dt >= start and next_dt > now and next_dt.isoformat() not in (rule.get("exceptions") or []):
                 projected.append({
                     "id": f"proj-{rule['id']}-{next_dt.isoformat()}",
                     "user_id": user["id"],
@@ -949,6 +954,60 @@ async def update_recurring(rid: str, body: RecurringUpdateBody, user: dict = Dep
     )
     fresh = await db.recurring_rules.find_one({"id": rid}, {"_id": 0})
     return fresh
+
+
+class OccurrenceSkipBody(BaseModel):
+    date: str  # exact ISO date of the projected occurrence
+
+
+class OccurrenceOverrideBody(TransactionIn):
+    original_date: str  # exact ISO date of the projected occurrence being replaced
+
+
+async def _get_rule_or_404(rid: str, user_id: str) -> dict:
+    rule = await db.recurring_rules.find_one({"id": rid, "user_id": user_id}, {"_id": 0})
+    if not rule:
+        raise HTTPException(status_code=404, detail="Recurring rule not found")
+    return rule
+
+
+@api_router.post("/recurring/{rid}/skip")
+async def skip_occurrence(rid: str, body: OccurrenceSkipBody, user: dict = Depends(get_current_user)):
+    """Delete a single upcoming (not yet materialized) occurrence of a series."""
+    await _get_rule_or_404(rid, user["id"])
+    await db.recurring_rules.update_one(
+        {"id": rid, "user_id": user["id"]}, {"$addToSet": {"exceptions": body.date}}
+    )
+    return {"ok": True}
+
+
+@api_router.post("/recurring/{rid}/occurrence", response_model=TransactionOut)
+async def override_occurrence(rid: str, body: OccurrenceOverrideBody, user: dict = Depends(get_current_user)):
+    """Edit a single upcoming occurrence: stores it as a real transaction linked to
+    the series and hides the projected copy for that date."""
+    await _get_rule_or_404(rid, user["id"])
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "amount": float(body.amount),
+        "type": body.type,
+        "category": body.category,
+        "description": body.description or "",
+        "date": body.date or body.original_date,
+        "created_at": now,
+        "recurring_rule_id": rid,
+        "paid": bool(body.paid),
+    }
+    try:
+        await db.transactions.insert_one(doc)
+    except Exception:
+        raise HTTPException(status_code=409, detail="This series already has a transaction on that date")
+    await db.recurring_rules.update_one(
+        {"id": rid, "user_id": user["id"]}, {"$addToSet": {"exceptions": body.original_date}}
+    )
+    doc.pop("_id", None)
+    return doc
 
 
 @api_router.patch("/recurring/{rid}", response_model=RecurringOut)
