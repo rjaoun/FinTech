@@ -416,6 +416,9 @@ export default function Dashboard() {
                 enabled={!isProjected}
                 testID={`tx-delete-${t.id}`}
                 onDelete={() => onDelete(t)}
+                onTogglePaid={!isIncome ? () => togglePaid(t) : undefined}
+                isPaid={isPaid}
+                paidTestID={`tx-swipe-paid-${t.id}`}
               >
               {(guard) => (
               <TouchableOpacity

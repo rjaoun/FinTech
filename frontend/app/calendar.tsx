@@ -176,18 +176,12 @@ export default function CalendarScreen() {
               <Text style={[styles.totalValue, { color: theme.colors.income }]}>
                 {formatCurrency((totals?.income ?? 0) + (totals?.projected_income ?? 0), currency)}
               </Text>
-              {(totals?.projected_income ?? 0) > 0 ? (
-                <Text style={styles.totalProj}>incl. {formatCurrency(totals!.projected_income, currency)} upcoming</Text>
-              ) : null}
             </View>
             <View style={[styles.totalCard, { borderLeftColor: theme.colors.expense }]}>
               <Text style={styles.totalLabel}>Expense</Text>
               <Text style={[styles.totalValue, { color: theme.colors.expense }]}>
                 {formatCurrency((totals?.expense ?? 0) + (totals?.projected_expense ?? 0), currency)}
               </Text>
-              {(totals?.projected_expense ?? 0) > 0 ? (
-                <Text style={styles.totalProj}>incl. {formatCurrency(totals!.projected_expense, currency)} upcoming</Text>
-              ) : null}
             </View>
           </View>
 
@@ -367,7 +361,6 @@ const styles = StyleSheet.create({
   },
   totalLabel: { fontSize: 11, fontWeight: "700", color: theme.colors.textMuted, letterSpacing: 1.2 },
   totalValue: { fontSize: 18, fontWeight: "800", marginTop: 2, letterSpacing: -0.3 },
-  totalProj: { fontSize: 10, color: theme.colors.textMuted, marginTop: 2, fontStyle: "italic" },
   weekRow: { flexDirection: "row", marginBottom: 4 },
   weekLabel: {
     flex: 1, textAlign: "center", fontSize: 11, fontWeight: "700",

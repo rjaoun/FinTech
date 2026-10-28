@@ -11,11 +11,17 @@ type Props = {
   // so a drag (e.g. with a mouse on web) never doubles as a tap.
   children: (guard: (fn: () => void) => void) => React.ReactNode;
   onDelete: () => void;
+  // Optional swipe-right action: toggles paid state as soon as the row is swiped open.
+  onTogglePaid?: () => void;
+  isPaid?: boolean;
   enabled?: boolean;
   testID?: string;
+  paidTestID?: string;
 };
 
-export default function SwipeToDelete({ children, onDelete, enabled = true, testID }: Props) {
+export default function SwipeToDelete({
+  children, onDelete, onTogglePaid, isPaid, enabled = true, testID, paidTestID,
+}: Props) {
   const ref = useRef<SwipeableMethods>(null);
   const isOpen = useRef(false);
   const lastSwipe = useRef(0);
@@ -44,14 +50,39 @@ export default function SwipeToDelete({ children, onDelete, enabled = true, test
       onSwipeableCloseStartDrag={mark}
       onSwipeableWillOpen={mark}
       onSwipeableWillClose={mark}
-      onSwipeableOpen={() => {
+      leftThreshold={60}
+      overshootLeft={false}
+      onSwipeableOpen={(direction) => {
         isOpen.current = true;
         mark();
+        // "right" = row dragged to the right, revealing the left (paid) action.
+        if (direction === "right" && onTogglePaid) {
+          onTogglePaid();
+          ref.current?.close();
+        }
       }}
       onSwipeableClose={() => {
         isOpen.current = false;
         mark();
       }}
+      renderLeftActions={
+        onTogglePaid
+          ? () => (
+              <TouchableOpacity
+                testID={paidTestID}
+                accessibilityLabel={isPaid ? "Mark as unpaid" : "Mark as paid"}
+                style={[styles.action, styles.paidAction, isPaid && styles.unpaidAction]}
+                onPress={() => {
+                  ref.current?.close();
+                  onTogglePaid();
+                }}
+              >
+                <Ionicons name={isPaid ? "arrow-undo" : "checkmark-circle"} size={22} color="#FFFFFF" />
+                <Text style={styles.actionText}>{isPaid ? "Unpaid" : "Paid"}</Text>
+              </TouchableOpacity>
+            )
+          : undefined
+      }
       renderRightActions={() => (
         <TouchableOpacity
           testID={testID}
@@ -83,5 +114,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 2,
   },
+  paidAction: { marginLeft: 0, marginRight: 8, backgroundColor: theme.colors.income },
+  unpaidAction: { backgroundColor: theme.colors.accentSand },
   actionText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
 });
