@@ -319,9 +319,6 @@ export default function Dashboard() {
                 <Text style={styles.cellValue}>
                   {formatCurrency((summary?.month_income ?? 0) + (summary?.month_projected_income ?? 0), currency)}
                 </Text>
-                {(summary?.month_projected_income ?? 0) > 0 ? (
-                  <Text style={styles.projHint}>incl. {formatCurrency(summary!.month_projected_income, currency)} upcoming</Text>
-                ) : null}
               </View>
             </View>
             <View style={styles.verticalDivider} />
@@ -334,9 +331,6 @@ export default function Dashboard() {
                 <Text style={styles.cellValue}>
                   {formatCurrency((summary?.month_expense ?? 0) + (summary?.month_projected_expense ?? 0), currency)}
                 </Text>
-                {(summary?.month_projected_expense ?? 0) > 0 ? (
-                  <Text style={styles.projHint}>incl. {formatCurrency(summary!.month_projected_expense, currency)} upcoming</Text>
-                ) : null}
               </View>
             </View>
           </View>
@@ -584,7 +578,6 @@ const styles = StyleSheet.create({
   },
   cellLabel: { color: "#DCE6E1", fontSize: 10, fontWeight: "600", letterSpacing: 1.5 },
   cellValue: { color: theme.colors.textInverse, fontSize: 14, fontWeight: "700" },
-  projHint: { color: "#DCE6E1", fontSize: 10, marginTop: 1, fontStyle: "italic", opacity: 0.85 },
   verticalDivider: { width: 1, height: 30, backgroundColor: "#ffffff20", marginHorizontal: 6 },
   quickRow: { flexDirection: "row", gap: 10, marginTop: theme.spacing.md, marginBottom: theme.spacing.lg },
   quickBtn: {
